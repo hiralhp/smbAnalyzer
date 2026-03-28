@@ -17,13 +17,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Basic validation
-  if (!formInput.websiteUrl?.trim()) {
+  // Validation: require websiteUrl OR (businessName + city)
+  const hasUrl = !!formInput.websiteUrl?.trim();
+  const hasNameAndCity =
+    !!(formInput.businessName?.trim() && formInput.city?.trim());
+
+  if (!hasUrl && !hasNameAndCity) {
     return NextResponse.json(
-      { error: "websiteUrl is required" },
+      {
+        error:
+          "Provide a website URL, or both a business name and city.",
+      },
       { status: 400 }
     );
   }
+
+  const inputMode: "url" | "name_city" = hasUrl ? "url" : "name_city";
 
   // Derive a placeholder business name from the URL — pipeline will overwrite
   // it with the scraped page title once the website is fetched.
@@ -35,7 +44,8 @@ export async function POST(request: NextRequest) {
       return url;
     }
   }
-  const placeholderName = formInput.businessName?.trim() || domainFromUrl(formInput.websiteUrl.trim());
+  const placeholderName = formInput.businessName?.trim()
+    || (formInput.websiteUrl ? domainFromUrl(formInput.websiteUrl.trim()) : "Unknown");
 
   let supabase;
   try {
@@ -103,7 +113,7 @@ export async function POST(request: NextRequest) {
   // the client navigates to the report page. Errors are caught inside the
   // pipeline and stored in the DB as status="failed".
   const reportId = report.id;
-  await runAnalysisPipeline(reportId, formInput).catch((err) => {
+  await runAnalysisPipeline(reportId, formInput, inputMode).catch((err) => {
     console.error("[POST /api/reports] Pipeline error for", reportId, err);
   });
 

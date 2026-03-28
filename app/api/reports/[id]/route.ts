@@ -5,7 +5,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import type { Report, WebsiteSignalSummary, CompetitorSignalSummary } from "@/lib/types";
+import type {
+  Report,
+  WebsiteSignalSummary,
+  CompetitorSignalSummary,
+  ScoreExplanation,
+  QueryCoverageRow,
+  FaqRow,
+} from "@/lib/types";
 
 // Never cache — this route is polled for live status updates
 export const dynamic = "force-dynamic";
@@ -52,7 +59,7 @@ export async function GET(
 
   // Only fetch detail data if report is complete
   if (reportRow.status === "complete") {
-    // Scores
+    // Scores + explanation
     const { data: scores } = await supabase
       .from("report_scores")
       .select("*")
@@ -68,9 +75,22 @@ export async function GET(
         trustSignalScore: scores.trust_signal_score,
         faqDiscoverabilityScore: scores.faq_discoverability_score,
       };
+
+      // Score explanation (from explanation jsonb column)
+      const exp = scores.explanation as Record<string, string> | null;
+      if (exp) {
+        report.scoreExplanation = {
+          overall: exp.overall ?? "",
+          contentClarity: exp.content_clarity ?? "",
+          serviceSpecificity: exp.service_specificity ?? "",
+          localRelevance: exp.local_relevance ?? "",
+          trustSignals: exp.trust_signals ?? "",
+          faqDiscoverability: exp.faq_discoverability ?? "",
+        } satisfies ScoreExplanation;
+      }
     }
 
-    // Findings
+    // Findings (with evidence metadata)
     const { data: findings } = await supabase
       .from("report_findings")
       .select("*")
@@ -85,6 +105,10 @@ export async function GET(
           : never,
         label: f.label,
         detail: f.detail ?? undefined,
+        confidence: f.confidence ?? undefined,
+        evidence: f.evidence ?? undefined,
+        sourceSignal: f.source_signal ?? undefined,
+        ruleId: f.rule_id ?? undefined,
       }));
     }
 
@@ -178,6 +202,60 @@ export async function GET(
         fetchError: websiteAnalysis.fetch_error ?? undefined,
       };
       report.websiteSignals = signals;
+    }
+
+    // Query coverage
+    const { data: queryCoverage } = await supabase
+      .from("report_query_coverage")
+      .select("*")
+      .eq("report_id", id)
+      .order("coverage"); // strong → partial → weak
+
+    if (queryCoverage?.length) {
+      report.queryCoverage = queryCoverage.map(
+        (q): QueryCoverageRow => ({
+          query: q.query,
+          queryType: q.query_type ?? undefined,
+          coverage: q.coverage as "strong" | "partial" | "weak",
+          missingTerms: q.missing_terms ?? [],
+          matchedTerms: q.matched_terms ?? [],
+          titleMatch: q.title_match ?? false,
+          headingMatch: q.heading_match ?? false,
+          bodyMatch: q.body_match ?? false,
+          servicePageMatch: q.service_page_match ?? false,
+        })
+      );
+    }
+
+    // FAQs
+    const { data: faqs } = await supabase
+      .from("report_faqs")
+      .select("*")
+      .eq("report_id", id)
+      .order("sort_order");
+
+    if (faqs?.length) {
+      report.faqs = faqs.map(
+        (f): FaqRow => ({
+          question: f.question,
+          answer: f.answer ?? undefined,
+          category: f.category,
+          source: f.source as "deterministic" | "llm",
+          sortOrder: f.sort_order ?? undefined,
+        })
+      );
+    }
+
+    // Inference metadata (inferred city + category)
+    const { data: inference } = await supabase
+      .from("report_inference")
+      .select("inferred_city, canonical_category")
+      .eq("report_id", id)
+      .single();
+
+    if (inference) {
+      if (inference.inferred_city) report.inferredCity = inference.inferred_city;
+      if (inference.canonical_category) report.inferredCategory = inference.canonical_category;
     }
   }
 

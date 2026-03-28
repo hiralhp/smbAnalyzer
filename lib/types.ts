@@ -2,13 +2,54 @@
 // Shared types for the AI Visibility Report application
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Category classification ───────────────────────────────────────────────────
+// Re-exported here so consumers only need to import from @/lib/types
+
+export type CanonicalCategory =
+  | "restaurant_cafe"
+  | "dentist"
+  | "med_spa"
+  | "home_services"
+  | "lawyer"
+  | "salon"
+  | "finance"
+  | "fitness"
+  | "retail"
+  | "pet_services"
+  | "childcare"
+  | "generic";
+
+export interface CategoryClassification {
+  canonicalCategory: CanonicalCategory;
+  confidence: FindingConfidence;
+  evidence: string;
+}
+
+// ── Location extraction ───────────────────────────────────────────────────────
+
+export interface ExtractedLocation {
+  city: string;
+  source: "user_input" | "title" | "heading" | "meta" | "body";
+  confidence: FindingConfidence;
+}
+
+// ── FAQ ───────────────────────────────────────────────────────────────────────
+
+export interface FaqRow {
+  question: string;
+  answer?: string;
+  category: string;
+  source: "deterministic" | "llm";
+  sortOrder?: number;
+}
+
 // ── Form input ────────────────────────────────────────────────────────────────
 
 export interface ReportFormInput {
   businessName?: string;
-  websiteUrl: string;
-  category: string;
-  city: string;
+  websiteUrl?: string;   // optional when businessName + city are provided
+  category?: string;
+  city?: string;
   topServices?: string[];
   competitorUrls?: string[];
   competitorNames?: string[];
@@ -56,14 +97,67 @@ export interface ScoreBreakdown {
   faqDiscoverabilityScore: number;
 }
 
+/** Deterministic text explanation for each score bucket. Stored as jsonb. */
+export interface ScoreExplanation {
+  overall: string;
+  contentClarity: string;
+  serviceSpecificity: string;
+  localRelevance: string;
+  trustSignals: string;
+  faqDiscoverability: string;
+}
+
 export type FindingType = "strength" | "gap" | "signal";
 export type FindingCategory = "content" | "local" | "trust" | "faq" | "service" | "general";
+export type FindingConfidence = "high" | "medium" | "low";
 
 export interface Finding {
   type: FindingType;
   category: FindingCategory;
   label: string;
   detail?: string;
+  // Evidence metadata (002_data_enrichment)
+  confidence?: FindingConfidence;
+  evidence?: string;      // specific text describing what was/wasn't found
+  sourceSignal?: string;  // e.g. "contact_info", "has_faq"
+  ruleId?: string;        // e.g. "contact_info_present", "city_in_title"
+}
+
+// ── Query coverage ────────────────────────────────────────────────────────────
+// ANALYTICAL ASSET: per-query coverage records stored in report_query_coverage.
+
+export interface QueryCoverageRow {
+  query: string;
+  queryType?: string;
+  coverage: "strong" | "partial" | "weak";
+  missingTerms: string[];
+  matchedTerms: string[];
+  titleMatch: boolean;
+  headingMatch: boolean;
+  bodyMatch: boolean;
+  servicePageMatch: boolean;
+}
+
+// ── Report signals ────────────────────────────────────────────────────────────
+// ANALYTICAL ASSET: normalized signal rows in report_signals.
+
+export interface ReportSignal {
+  signalName: string;
+  signalValue: string;
+  signalType: string;
+  confidence?: FindingConfidence;
+  evidence?: string;
+}
+
+// ── Competitor record ─────────────────────────────────────────────────────────
+// CANONICAL: report_competitors is the source of truth, replacing arrays.
+
+export interface CompetitorRecord {
+  id?: string;
+  name: string;
+  websiteUrl?: string;
+  source: "user_provided" | "auto_discovered" | "mock";
+  discoveryScore?: number;
 }
 
 // ── LLM outputs ───────────────────────────────────────────────────────────────
@@ -114,6 +208,7 @@ export interface Report {
     city?: string;
   };
   scores?: ScoreBreakdown;
+  scoreExplanation?: ScoreExplanation;
   findings?: Finding[];
   recommendations?: Recommendation[];
   llmOutput?: {
@@ -126,6 +221,10 @@ export interface Report {
   };
   websiteSignals?: WebsiteSignalSummary;
   competitorSignals?: CompetitorSignalSummary[];
+  queryCoverage?: QueryCoverageRow[];
+  faqs?: FaqRow[];
+  inferredCategory?: string;
+  inferredCity?: string;
 }
 
 export interface Recommendation {

@@ -6,10 +6,12 @@ interface ScoreBarProps {
   label: string;
   score: number;
   description?: string;
+  explanation?: string;
 }
 
-export function ScoreBar({ label, score, description }: ScoreBarProps) {
+export function ScoreBar({ label, score, description, explanation }: ScoreBarProps) {
   const color = scoreStrokeColor(score);
+  const tooltip = explanation ?? description;
 
   return (
     <div className="group">
@@ -28,9 +30,9 @@ export function ScoreBar({ label, score, description }: ScoreBarProps) {
           style={{ width: `${score}%`, backgroundColor: color }}
         />
       </div>
-      {description && (
-        <p className="text-xs text-slate-400 mt-1 hidden group-hover:block">
-          {description}
+      {tooltip && (
+        <p className="text-xs text-slate-400 mt-1 hidden group-hover:block leading-snug">
+          {tooltip}
         </p>
       )}
     </div>

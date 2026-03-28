@@ -28,6 +28,7 @@ const CATEGORIES = [
 ];
 
 interface FormState {
+  businessName: string;
   websiteUrl: string;
   category: string;
   city: string;
@@ -38,6 +39,7 @@ interface FormState {
 export function ReportForm() {
   const router = useRouter();
   const [form, setForm] = useState<FormState>({
+    businessName: "",
     websiteUrl: "",
     category: "",
     city: "",
@@ -54,19 +56,27 @@ export function ReportForm() {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
+  const hasUrl = form.websiteUrl.trim().length > 0;
+  const hasNameAndCity =
+    form.businessName.trim().length > 0 && form.city.trim().length > 0;
+  const canSubmit = hasUrl || hasNameAndCity;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!form.websiteUrl.trim()) {
-      setError("Website URL is required.");
+    if (!canSubmit) {
+      setError(
+        "Enter a website URL, or provide both a business name and city."
+      );
       return;
     }
 
     setSubmitting(true);
 
     const payload = {
-      websiteUrl: form.websiteUrl.trim(),
+      businessName: form.businessName.trim() || undefined,
+      websiteUrl: form.websiteUrl.trim() || undefined,
       category: form.category || undefined,
       city: form.city.trim() || undefined,
       topServices: form.topServices
@@ -109,7 +119,7 @@ export function ReportForm() {
 
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Website URL <span className="text-red-500">*</span>
+            Website URL{hasUrl && <span className="text-red-500"> *</span>}
           </label>
           <input
             type="url"
@@ -118,35 +128,35 @@ export function ReportForm() {
             onChange={handleChange}
             placeholder="https://yourwebsite.com"
             className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400"
-            required
           />
           <p className="text-xs text-slate-400 mt-1">
-            We&apos;ll analyze your site and extract your business name automatically.
+            We&apos;ll analyze your site and extract your business name automatically.{" "}
+            <span className="text-slate-500 font-medium">
+              Don&apos;t have a website? Enter name + city below instead.
+            </span>
           </p>
         </div>
 
+        {/* Name + city — required when no URL */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1.5">
-              Business category
+              Business name
+              {!hasUrl && <span className="text-red-500"> *</span>}
             </label>
-            <select
-              name="category"
-              value={form.category}
+            <input
+              type="text"
+              name="businessName"
+              value={form.businessName}
               onChange={handleChange}
-              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent text-slate-700 bg-white"
-            >
-              <option value="">Select a category</option>
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+              placeholder="e.g. Blue Ridge HVAC"
+              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1.5">
               City / Location
+              {!hasUrl && <span className="text-red-500"> *</span>}
             </label>
             <input
               type="text"
@@ -157,6 +167,25 @@ export function ReportForm() {
               className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400"
             />
           </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1.5">
+            Business category
+          </label>
+          <select
+            name="category"
+            value={form.category}
+            onChange={handleChange}
+            className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent text-slate-700 bg-white"
+          >
+            <option value="">Select a category</option>
+            {CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div>
@@ -242,10 +271,10 @@ export function ReportForm() {
 
       <button
         type="submit"
-        disabled={submitting}
+        disabled={submitting || !canSubmit}
         className={cn(
           "w-full flex items-center justify-center gap-2 py-4 px-6 rounded-xl font-semibold text-base transition-colors",
-          submitting
+          submitting || !canSubmit
             ? "bg-brand-400 cursor-not-allowed text-white"
             : "bg-brand-600 hover:bg-brand-700 text-white shadow-sm"
         )}

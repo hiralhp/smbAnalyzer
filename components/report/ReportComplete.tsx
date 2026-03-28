@@ -11,6 +11,8 @@ import {
   displayUrl,
 } from "@/lib/utils";
 import { CompetitorComparison } from "./CompetitorComparison";
+import { QueryCoverage } from "./QueryCoverage";
+import { FaqSection } from "./FaqSection";
 
 interface ReportCompleteProps {
   report: Report;
@@ -36,7 +38,7 @@ const CONTENT_ASSET_LABELS: Record<string, string> = {
 };
 
 export function ReportComplete({ report }: ReportCompleteProps) {
-  const { business, scores, findings, recommendations, llmOutput, websiteSignals, competitorSignals } = report;
+  const { business, scores, scoreExplanation, findings, recommendations, llmOutput, websiteSignals, competitorSignals, queryCoverage, faqs } = report;
 
   const strengths = findings?.filter((f) => f.type === "strength") ?? [];
   const gaps = findings?.filter((f) => f.type === "gap") ?? [];
@@ -81,17 +83,17 @@ export function ReportComplete({ report }: ReportCompleteProps) {
                   {business.name}
                 </h1>
                 <div className="flex flex-wrap gap-2">
-                  {business.category && (
+                  {(business.category || report.inferredCategory) && (
                     <span className="bg-white/20 text-white text-xs px-2.5 py-1 rounded-full">
-                      {business.category}
+                      {business.category || report.inferredCategory}
                     </span>
                   )}
-                  {business.city && (
+                  {(business.city || report.inferredCity) && (
                     <span className="bg-white/20 text-white text-xs px-2.5 py-1 rounded-full flex items-center gap-1">
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                       </svg>
-                      {business.city}
+                      {business.city || report.inferredCity}
                     </span>
                   )}
                   {business.websiteUrl && (
@@ -144,9 +146,15 @@ export function ReportComplete({ report }: ReportCompleteProps) {
                           <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                         </svg>
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-slate-800">{s.label}</p>
-                        {s.detail && <p className="text-xs text-slate-500 mt-0.5">{s.detail}</p>}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium text-slate-800">{s.label}</p>
+                          {s.confidence && <ConfidenceBadge confidence={s.confidence} />}
+                        </div>
+                        {s.evidence
+                          ? <p className="text-xs text-slate-500 mt-0.5">{s.evidence}</p>
+                          : s.detail && <p className="text-xs text-slate-500 mt-0.5">{s.detail}</p>
+                        }
                       </div>
                     </div>
                   ))}
@@ -165,9 +173,15 @@ export function ReportComplete({ report }: ReportCompleteProps) {
                           <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                         </svg>
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-slate-800">{g.label}</p>
-                        {g.detail && <p className="text-xs text-slate-500 mt-0.5">{g.detail}</p>}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium text-slate-800">{g.label}</p>
+                          {g.confidence && <ConfidenceBadge confidence={g.confidence} />}
+                        </div>
+                        {g.evidence
+                          ? <p className="text-xs text-slate-500 mt-0.5">{g.evidence}</p>
+                          : g.detail && <p className="text-xs text-slate-500 mt-0.5">{g.detail}</p>
+                        }
                       </div>
                     </div>
                   ))}
@@ -215,9 +229,19 @@ export function ReportComplete({ report }: ReportCompleteProps) {
               </Section>
             )}
 
+            {/* FAQ section */}
+            {faqs && faqs.length > 0 && (
+              <FaqSection faqs={faqs} businessName={business.name} />
+            )}
+
             {/* Competitor comparison */}
             {websiteSignals && competitorSignals && competitorSignals.length > 0 && (
               <CompetitorComparison you={websiteSignals} competitors={competitorSignals} />
+            )}
+
+            {/* Query coverage */}
+            {queryCoverage && queryCoverage.length > 0 && (
+              <QueryCoverage rows={queryCoverage} />
             )}
 
             {/* Content Asset */}
@@ -247,12 +271,17 @@ export function ReportComplete({ report }: ReportCompleteProps) {
                   Score breakdown
                 </h2>
                 <div className="space-y-5">
-                  <ScoreBar label="Content clarity" score={scores.contentClarityScore} />
-                  <ScoreBar label="Service specificity" score={scores.serviceSpecificityScore} />
-                  <ScoreBar label="Local relevance" score={scores.localRelevanceScore} />
-                  <ScoreBar label="Trust signals" score={scores.trustSignalScore} />
-                  <ScoreBar label="FAQ / Discoverability" score={scores.faqDiscoverabilityScore} />
+                  <ScoreBar label="Content clarity" score={scores.contentClarityScore} explanation={scoreExplanation?.contentClarity} />
+                  <ScoreBar label="Service specificity" score={scores.serviceSpecificityScore} explanation={scoreExplanation?.serviceSpecificity} />
+                  <ScoreBar label="Local relevance" score={scores.localRelevanceScore} explanation={scoreExplanation?.localRelevance} />
+                  <ScoreBar label="Trust signals" score={scores.trustSignalScore} explanation={scoreExplanation?.trustSignals} />
+                  <ScoreBar label="FAQ / Discoverability" score={scores.faqDiscoverabilityScore} explanation={scoreExplanation?.faqDiscoverability} />
                 </div>
+                {scoreExplanation?.overall && (
+                  <p className="text-xs text-slate-400 mt-5 pt-4 border-t border-slate-100 leading-relaxed">
+                    {scoreExplanation.overall}
+                  </p>
+                )}
               </div>
             )}
 
@@ -368,7 +397,20 @@ export function ReportComplete({ report }: ReportCompleteProps) {
   );
 }
 
-// ── Helper component ──────────────────────────────────────────────────────────
+// ── Helper components ─────────────────────────────────────────────────────────
+
+function ConfidenceBadge({ confidence }: { confidence: "high" | "medium" | "low" }) {
+  const styles = {
+    high: "bg-slate-100 text-slate-500",
+    medium: "bg-slate-100 text-slate-400",
+    low: "bg-slate-50 text-slate-300",
+  };
+  return (
+    <span className={`text-xs px-1.5 py-0.5 rounded font-normal ${styles[confidence]}`}>
+      {confidence} confidence
+    </span>
+  );
+}
 
 function Section({
   title,

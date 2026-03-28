@@ -4,34 +4,48 @@
 // Takes a WebsiteAnalysis and returns a ScoreBreakdown + list of Findings.
 // No LLM calls here — pure rule-based logic.
 //
-// Each sub-score is computed independently, then combined into an overall score.
-// Rules are defined as arrays of scored conditions for easy extension.
+// Each finding now includes: confidence, evidence, sourceSignal, ruleId
+// so findings are queryable and explainable independently of the UI.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type {
   WebsiteAnalysis,
   ScoreBreakdown,
+  ScoreExplanation,
   Finding,
   FindingCategory,
+  FindingConfidence,
   ReportFormInput,
+  CanonicalCategory,
 } from "@/lib/types";
+import {
+  DEFAULT_WEIGHTS,
+  CATEGORY_WEIGHTS,
+  CATEGORY_REC_OVERRIDES,
+  type RecTemplate,
+} from "./category-templates";
 
 // ── Score rule helpers ────────────────────────────────────────────────────────
 
 interface ScoredCondition {
   points: number;
   condition: boolean;
-  /** If true, adds to score. If false, produces a gap finding. */
+  category: FindingCategory;
+  confidence: FindingConfidence;
+  ruleId: string;
+  sourceSignal: string;
   strengthLabel?: string;
   strengthDetail?: string;
+  strengthEvidence?: string;
   gapLabel?: string;
   gapDetail?: string;
-  category: FindingCategory;
+  gapEvidence?: string;
 }
 
 function applyRules(
   rules: ScoredCondition[],
-  maxPossible: number
+  maxPossible: number,
+  sourceUrl?: string
 ): { rawScore: number; findings: Finding[] } {
   let rawScore = 0;
   const findings: Finding[] = [];
@@ -45,6 +59,10 @@ function applyRules(
           category: rule.category,
           label: rule.strengthLabel,
           detail: rule.strengthDetail,
+          confidence: rule.confidence,
+          evidence: rule.strengthEvidence,
+          sourceSignal: rule.sourceSignal,
+          ruleId: rule.ruleId,
         });
       }
     } else {
@@ -54,6 +72,10 @@ function applyRules(
           category: rule.category,
           label: rule.gapLabel,
           detail: rule.gapDetail,
+          confidence: rule.confidence,
+          evidence: rule.gapEvidence,
+          sourceSignal: rule.sourceSignal,
+          ruleId: rule.ruleId,
         });
       }
     }
@@ -66,7 +88,7 @@ function applyRules(
 
 // ── Sub-score: Content Clarity (max 40 pts) ───────────────────────────────────
 
-function scoreContentClarity(a: WebsiteAnalysis): {
+function scoreContentClarity(a: WebsiteAnalysis, sourceUrl?: string): {
   score: number;
   findings: Finding[];
 } {
@@ -75,43 +97,61 @@ function scoreContentClarity(a: WebsiteAnalysis): {
       points: 10,
       condition: !!a.title,
       category: "content",
+      confidence: "high",
+      ruleId: "title_tag_present",
+      sourceSignal: "title_tag",
       strengthLabel: "Descriptive title tag",
       strengthDetail: `Title: "${a.title}"`,
+      strengthEvidence: `<title> tag found: "${a.title}"`,
       gapLabel: "Missing title tag",
       gapDetail: "A clear title tag helps AI understand what the business is.",
+      gapEvidence: "No <title> element detected on the page.",
     },
     {
       points: 10,
       condition: !!a.metaDescription,
       category: "content",
+      confidence: "high",
+      ruleId: "meta_description_present",
+      sourceSignal: "meta_description",
       strengthLabel: "Meta description present",
       strengthDetail: `"${a.metaDescription?.slice(0, 80)}..."`,
+      strengthEvidence: `Meta description found: "${a.metaDescription?.slice(0, 100)}"`,
       gapLabel: "No meta description",
-      gapDetail:
-        "A meta description gives AI a concise business summary.",
+      gapDetail: "A meta description gives AI a concise business summary.",
+      gapEvidence: "No <meta name=\"description\"> tag found in page <head>.",
     },
     {
       points: 10,
       condition: a.h1Headings.length > 0,
       category: "content",
+      confidence: "high",
+      ruleId: "h1_present",
+      sourceSignal: "h1_heading",
       strengthLabel: "Clear H1 heading",
       strengthDetail: `H1: "${a.h1Headings[0]}"`,
+      strengthEvidence: `<h1> detected: "${a.h1Headings[0]}"`,
       gapLabel: "No H1 heading detected",
       gapDetail: "H1 headings are a primary signal for AI topic extraction.",
+      gapEvidence: "No <h1> element found on the page.",
     },
     {
       points: 10,
       condition: a.h2Headings.length >= 3,
       category: "content",
+      confidence: "high",
+      ruleId: "h2_structure",
+      sourceSignal: "h2_count",
       strengthLabel: "Multiple H2 section headings",
       strengthDetail: `Found ${a.h2Headings.length} section headings, improving content structure.`,
+      strengthEvidence: `${a.h2Headings.length} <h2> elements found, providing clear content sections.`,
       gapLabel: "Insufficient content structure (few H2 headings)",
-      gapDetail:
-        "Adding H2 headings for each major topic area improves AI comprehension.",
+      gapDetail: "Adding H2 headings for each major topic area improves AI comprehension.",
+      gapEvidence: `Only ${a.h2Headings.length} <h2> heading${a.h2Headings.length === 1 ? "" : "s"} found; at least 3 are recommended for good content structure.`,
     },
   ];
 
-  const { rawScore, findings } = applyRules(rules, 40);
+  const { rawScore, findings } = applyRules(rules, 40, sourceUrl);
   return { score: rawScore, findings };
 }
 
@@ -119,49 +159,71 @@ function scoreContentClarity(a: WebsiteAnalysis): {
 
 function scoreServiceSpecificity(
   a: WebsiteAnalysis,
-  formInput: ReportFormInput
+  formInput: ReportFormInput,
+  sourceUrl?: string
 ): { score: number; findings: Finding[] } {
-  const servicesProvided = (formInput.topServices ?? []).length > 0;
+  const services = formInput.topServices ?? [];
+  const servicesProvided = services.length > 0;
+
+  const matchingH2 = servicesProvided
+    ? a.h2Headings.find((h) =>
+        services.some((s) => h.toLowerCase().includes(s.toLowerCase()))
+      )
+    : undefined;
+
+  const servicesInHeadingsCondition =
+    servicesProvided && !!matchingH2;
 
   const rules: ScoredCondition[] = [
     {
       points: 15,
       condition: a.hasServicePages,
       category: "service",
+      confidence: "medium",
+      ruleId: "service_pages_present",
+      sourceSignal: "service_pages",
       strengthLabel: "Dedicated service pages detected",
-      strengthDetail:
-        "Individual service pages help AI recommend you for specific queries.",
+      strengthDetail: "Individual service pages help AI recommend you for specific queries.",
+      strengthEvidence: "Service-oriented links detected (e.g. paths containing /services, /solutions, /work).",
       gapLabel: "No dedicated service pages",
-      gapDetail:
-        "Creating separate pages for each service dramatically improves AI discoverability for specific service queries.",
+      gapDetail: "Creating separate pages for each service dramatically improves AI discoverability.",
+      gapEvidence: "No links with service-oriented path segments (/services, /solutions, /work) found in page navigation.",
     },
     {
       points: 10,
-      condition: servicesProvided && a.h2Headings.some((h) =>
-        (formInput.topServices ?? []).some((s) =>
-          h.toLowerCase().includes(s.toLowerCase())
-        )
-      ),
+      condition: servicesInHeadingsCondition,
       category: "service",
+      confidence: servicesProvided ? "high" : "medium",
+      ruleId: "services_in_headings",
+      sourceSignal: "services_in_headings",
       strengthLabel: "Services mentioned in headings",
       strengthDetail: "Service names appear in H2 headings, signaling service content to AI.",
+      strengthEvidence: matchingH2
+        ? `Service keyword found in H2: "${matchingH2}"`
+        : "Service terms found in headings.",
       gapLabel: "Services not prominent in headings",
-      gapDetail:
-        "Mention your specific services in H2 headings so AI can surface them in responses.",
+      gapDetail: "Mention your specific services in H2 headings so AI can surface them in responses.",
+      gapEvidence: servicesProvided
+        ? `None of the provided services (${services.slice(0, 3).join(", ")}) were found in any H2 heading.`
+        : "No top services provided — cannot check heading prominence.",
     },
     {
       points: 5,
       condition: a.hasPricing,
       category: "service",
+      confidence: "medium",
+      ruleId: "pricing_language",
+      sourceSignal: "pricing",
       strengthLabel: "Pricing language present",
       strengthDetail: "Pricing context helps AI qualify your business for budget-aware queries.",
+      strengthEvidence: 'Pricing-related terms detected (e.g. "quote", "estimate", "$", "starting at").',
       gapLabel: "No pricing language detected",
-      gapDetail:
-        "Adding pricing context (even ranges) helps AI match your business to intent-specific searches.",
+      gapDetail: "Adding pricing context (even ranges) helps AI match your business to intent-specific searches.",
+      gapEvidence: 'No pricing-related terms found ("price", "cost", "quote", "estimate", "$").',
     },
   ];
 
-  const { rawScore, findings } = applyRules(rules, 30);
+  const { rawScore, findings } = applyRules(rules, 30, sourceUrl);
   return { score: rawScore, findings };
 }
 
@@ -169,7 +231,8 @@ function scoreServiceSpecificity(
 
 function scoreLocalRelevance(
   a: WebsiteAnalysis,
-  formInput: ReportFormInput
+  formInput: ReportFormInput,
+  sourceUrl?: string
 ): { score: number; findings: Finding[] } {
   const cityLower = (formInput.city ?? "").toLowerCase();
   const prominentText = [
@@ -190,41 +253,57 @@ function scoreLocalRelevance(
       points: 10,
       condition: a.hasLocationMention,
       category: "local",
+      confidence: "medium",
+      ruleId: "location_mention",
+      sourceSignal: "location_mention",
       strengthLabel: "Location clearly mentioned",
       strengthDetail: "City or location reference detected in prominent page positions.",
+      strengthEvidence: "Location language detected in title or H1 (e.g. city+state pattern, or terms like 'serving', 'located in').",
       gapLabel: "Location not clearly stated",
-      gapDetail:
-        "AI assistants use location signals to match businesses to \"near me\" and city-specific queries.",
+      gapDetail: "AI assistants use location signals to match businesses to \"near me\" and city-specific queries.",
+      gapEvidence: "No city/state pattern or location language ('serving', 'located in', 'based in') detected in title or H1.",
     },
     {
       points: 8,
       condition: cityInTitle,
       category: "local",
+      confidence: cityLower.length > 0 ? "high" : "low",
+      ruleId: "city_in_title",
+      sourceSignal: "city_in_title",
       strengthLabel: "City name in title tag",
       strengthDetail: `"${formInput.city}" appears in the page title, a strong local signal.`,
+      strengthEvidence: `"${formInput.city}" found in page <title> tag.`,
       gapLabel: "City not in title tag",
-      gapDetail:
-        `Adding "${formInput.city}" to your title tag is one of the easiest local relevance wins.`,
+      gapDetail: `Adding "${formInput.city}" to your title tag is one of the easiest local relevance wins.`,
+      gapEvidence: cityLower.length > 0
+        ? `"${formInput.city}" not found in the page <title> tag.`
+        : "No city provided — cannot check city presence in title.",
     },
     {
       points: 7,
       condition: cityInHeadings,
       category: "local",
+      confidence: cityLower.length > 0 ? "high" : "low",
+      ruleId: "city_in_headings",
+      sourceSignal: "city_in_headings",
       strengthLabel: "Location mentioned in headings",
       strengthDetail: "Local geographic context appears in page headings.",
+      strengthEvidence: `"${formInput.city}" found in H1 or H2 headings.`,
       gapLabel: "City not in page headings",
-      gapDetail:
-        "Include your city/region in at least one H1 or H2 to strengthen local AI relevance.",
+      gapDetail: "Include your city/region in at least one H1 or H2 to strengthen local AI relevance.",
+      gapEvidence: cityLower.length > 0
+        ? `"${formInput.city}" not found in any H1 or H2 heading.`
+        : "No city provided — cannot check heading locality.",
     },
   ];
 
-  const { rawScore, findings } = applyRules(rules, 25);
+  const { rawScore, findings } = applyRules(rules, 25, sourceUrl);
   return { score: rawScore, findings };
 }
 
 // ── Sub-score: Trust Signals (max 25 pts) ────────────────────────────────────
 
-function scoreTrustSignals(a: WebsiteAnalysis): {
+function scoreTrustSignals(a: WebsiteAnalysis, sourceUrl?: string): {
   score: number;
   findings: Finding[];
 } {
@@ -233,53 +312,67 @@ function scoreTrustSignals(a: WebsiteAnalysis): {
       points: 8,
       condition: a.hasContactInfo,
       category: "trust",
+      confidence: "high",
+      ruleId: "contact_info_present",
+      sourceSignal: "contact_info",
       strengthLabel: "Contact information present",
       strengthDetail: "Phone number or email address detected on the page.",
+      strengthEvidence: "Phone number or email address pattern matched on the page.",
       gapLabel: "No contact information detected",
-      gapDetail:
-        "Visible contact details are a basic trust signal AI systems use to verify legitimacy.",
+      gapDetail: "Visible contact details are a basic trust signal AI systems use to verify legitimacy.",
+      gapEvidence: "No phone number (e.g. 555-555-5555) or email address found on the homepage.",
     },
     {
       points: 7,
       condition: a.hasTestimonials,
       category: "trust",
+      confidence: "medium",
+      ruleId: "testimonials_present",
+      sourceSignal: "testimonials",
       strengthLabel: "Customer testimonials embedded",
       strengthDetail: "Review or testimonial content detected on the site.",
+      strengthEvidence: 'Testimonial/review keywords detected (e.g. "testimonial", "what our customers say", "★").',
       gapLabel: "No embedded reviews or testimonials",
-      gapDetail:
-        "Customer reviews embedded directly on your site (not just Google) strengthen AI trust signals.",
+      gapDetail: "Customer reviews embedded directly on your site strengthen AI trust signals.",
+      gapEvidence: 'No review or testimonial language found ("testimonial", "review", "what our customers", "5 star").',
     },
     {
       points: 6,
       condition: a.hasTrustSignals,
       category: "trust",
+      confidence: "medium",
+      ruleId: "trust_keywords_present",
+      sourceSignal: "trust_keywords",
       strengthLabel: "Professional trust indicators",
-      strengthDetail:
-        "Words like licensed, certified, insured, or guaranteed were detected.",
+      strengthDetail: "Words like licensed, certified, insured, or guaranteed were detected.",
+      strengthEvidence: 'Professional credential language found (e.g. "licensed", "certified", "insured", "accredited").',
       gapLabel: "No professional trust indicators",
-      gapDetail:
-        'Mentioning licensing, certifications, or guarantees ("licensed & insured") significantly boosts AI trust scoring.',
+      gapDetail: 'Mentioning licensing, certifications, or guarantees ("licensed & insured") significantly boosts AI trust scoring.',
+      gapEvidence: 'No credential language found ("licensed", "certified", "insured", "accredited", "guaranteed", "BBB").',
     },
     {
       points: 4,
       condition: a.hasHours,
       category: "trust",
+      confidence: "medium",
+      ruleId: "hours_present",
+      sourceSignal: "hours",
       strengthLabel: "Business hours mentioned",
-      strengthDetail:
-        "Operating hours help AI assistants answer availability questions about your business.",
+      strengthDetail: "Operating hours help AI assistants answer availability questions about your business.",
+      strengthEvidence: 'Hours-related content detected (e.g. "Monday", "open", "am/pm", "24/7").',
       gapLabel: "No business hours detected",
-      gapDetail:
-        "Adding operating hours helps AI answer questions like \"Are they open now?\"",
+      gapDetail: "Adding operating hours helps AI answer questions like \"Are they open now?\"",
+      gapEvidence: 'No hours-related language found ("Monday", "hours", "open", "am", "pm", "24/7").',
     },
   ];
 
-  const { rawScore, findings } = applyRules(rules, 25);
+  const { rawScore, findings } = applyRules(rules, 25, sourceUrl);
   return { score: rawScore, findings };
 }
 
 // ── Sub-score: FAQ / Discoverability (max 20 pts) ────────────────────────────
 
-function scoreFaqDiscoverability(a: WebsiteAnalysis): {
+function scoreFaqDiscoverability(a: WebsiteAnalysis, sourceUrl?: string): {
   score: number;
   findings: Finding[];
 } {
@@ -288,41 +381,148 @@ function scoreFaqDiscoverability(a: WebsiteAnalysis): {
       points: 15,
       condition: a.hasFaq,
       category: "faq",
+      confidence: "medium",
+      ruleId: "faq_present",
+      sourceSignal: "has_faq",
       strengthLabel: "FAQ section detected",
-      strengthDetail:
-        "FAQ content helps AI surface direct answers about your business.",
+      strengthDetail: "FAQ content helps AI surface direct answers about your business.",
+      strengthEvidence: 'FAQ-related content detected (e.g. "FAQ", "Frequently Asked Questions", "Q&A").',
       gapLabel: "No FAQ section detected",
-      gapDetail:
-        "A FAQ section is the single highest-impact change for AI discoverability. AI assistants frequently pull FAQ content to answer user questions.",
+      gapDetail: "A FAQ section is the single highest-impact change for AI discoverability.",
+      gapEvidence: 'No FAQ-like headings or sections found ("faq", "frequently asked", "common questions", "q&a").',
     },
     {
       points: 5,
       condition: a.h2Headings.length >= 5,
       category: "faq",
+      confidence: "high",
+      ruleId: "content_depth",
+      sourceSignal: "h2_count",
       strengthLabel: "Rich content structure",
       strengthDetail: `${a.h2Headings.length} H2 headings provide strong topical coverage.`,
+      strengthEvidence: `${a.h2Headings.length} <h2> headings detected — strong topical depth.`,
       gapLabel: "Limited topical depth",
-      gapDetail:
-        "Expand content depth with more structured sections to improve topical coverage for AI.",
+      gapDetail: "Expand content depth with more structured sections to improve topical coverage for AI.",
+      gapEvidence: `Only ${a.h2Headings.length} <h2> heading${a.h2Headings.length === 1 ? "" : "s"} found; at least 5 sections are recommended for strong topical coverage.`,
     },
   ];
 
-  const { rawScore, findings } = applyRules(rules, 20);
+  const { rawScore, findings } = applyRules(rules, 20, sourceUrl);
   return { score: rawScore, findings };
 }
 
-// ── Main scoring function ────────────────────────────────────────────────────
+// ── Score explanation generator ───────────────────────────────────────────────
+
+/**
+ * Build a human-readable + machine-readable explanation for each score bucket.
+ * Purely deterministic — uses scores and findings, no LLM.
+ */
+export function generateScoreExplanation(
+  scores: ScoreBreakdown,
+  findings: Finding[]
+): ScoreExplanation {
+  const gaps = findings.filter((f) => f.type === "gap");
+  const strengths = findings.filter((f) => f.type === "strength");
+
+  function gapsIn(category: string): Finding[] {
+    return gaps.filter((f) => f.category === category);
+  }
+  function strengthsIn(category: string): Finding[] {
+    return strengths.filter((f) => f.category === category);
+  }
+
+  // Content clarity
+  const contentGaps = gapsIn("content");
+  let contentClarity: string;
+  if (scores.contentClarityScore >= 75) {
+    contentClarity = "Strong content structure with title, meta description, and multiple headings.";
+  } else if (contentGaps.length === 0) {
+    contentClarity = "Content structure is adequate.";
+  } else {
+    contentClarity = `Missing: ${contentGaps.map((g) => g.label.toLowerCase()).join("; ")}.`;
+  }
+
+  // Service specificity
+  const serviceGaps = gapsIn("service");
+  let serviceSpecificity: string;
+  if (scores.serviceSpecificityScore >= 75) {
+    serviceSpecificity = "Service pages and service headings detected — good AI service discoverability.";
+  } else if (serviceGaps.length === 0) {
+    serviceSpecificity = "Services are reasonably well represented.";
+  } else {
+    serviceSpecificity = `Missing: ${serviceGaps.map((g) => g.label.toLowerCase()).join("; ")}.`;
+  }
+
+  // Local relevance
+  const localGaps = gapsIn("local");
+  let localRelevance: string;
+  if (scores.localRelevanceScore >= 75) {
+    localRelevance = "City and location signals are present in prominent positions.";
+  } else if (localGaps.length === 0) {
+    localRelevance = "Location is reasonably well indicated.";
+  } else {
+    localRelevance = `Missing: ${localGaps.map((g) => g.label.toLowerCase()).join("; ")}.`;
+  }
+
+  // Trust signals
+  const trustGaps = gapsIn("trust");
+  let trustSignals: string;
+  if (scores.trustSignalScore >= 75) {
+    trustSignals = "Strong trust signals including contact info, testimonials, and credentials.";
+  } else if (trustGaps.length === 0) {
+    trustSignals = "Trust signals are adequate.";
+  } else {
+    trustSignals = `Missing: ${trustGaps.map((g) => g.label.toLowerCase()).join("; ")}.`;
+  }
+
+  // FAQ
+  const faqGaps = gapsIn("faq");
+  let faqDiscoverability: string;
+  if (scores.faqDiscoverabilityScore >= 75) {
+    faqDiscoverability = "FAQ content and rich structure detected — excellent AI answer coverage.";
+  } else if (faqGaps.find((g) => g.ruleId === "faq_present")) {
+    faqDiscoverability = "No FAQ section detected — highest impact gap for AI discoverability.";
+  } else {
+    faqDiscoverability = "Limited topical depth; adding FAQ content would significantly improve AI coverage.";
+  }
+
+  // Overall
+  const totalGaps = gaps.length;
+  const totalStrengths = strengths.length;
+  let overall: string;
+  if (scores.overallScore >= 80) {
+    overall = `Strong overall AI visibility with ${totalStrengths} signals detected and only ${totalGaps} gap${totalGaps === 1 ? "" : "s"}.`;
+  } else if (scores.overallScore >= 50) {
+    overall = `Moderate AI visibility. ${totalStrengths} signals detected, ${totalGaps} gap${totalGaps === 1 ? "" : "s"} to address.`;
+  } else {
+    overall = `Low AI visibility — ${totalGaps} signal gap${totalGaps === 1 ? "" : "s"} significantly reduce discoverability.`;
+  }
+
+  return {
+    overall,
+    contentClarity,
+    serviceSpecificity,
+    localRelevance,
+    trustSignals,
+    faqDiscoverability,
+  };
+}
+
+// ── Main scoring function ─────────────────────────────────────────────────────
 
 /**
  * Run all scoring rules against a WebsiteAnalysis and return scores + findings.
  * Deterministic — no LLM calls.
+ * Accepts optional canonicalCategory to apply category-specific score weights.
  */
 export function scoreWebsite(
   analysis: WebsiteAnalysis,
-  formInput: ReportFormInput
+  formInput: ReportFormInput,
+  canonicalCategory: CanonicalCategory = "generic"
 ): { scores: ScoreBreakdown; findings: Finding[] } {
-  if (analysis.fetchError) {
-    // Website couldn't be fetched — return zeroes with a single gap finding
+  const sourceUrl = analysis.url || undefined;
+
+  if (analysis.fetchError && analysis.fetchError !== "no_url_provided") {
     return {
       scores: {
         overallScore: 0,
@@ -338,25 +538,57 @@ export function scoreWebsite(
           category: "general",
           label: "Website could not be analyzed",
           detail: `Error: ${analysis.fetchError}`,
+          confidence: "high",
+          evidence: `Fetch error: ${analysis.fetchError}`,
+          sourceSignal: "fetch_success",
+          ruleId: "website_fetchable",
         },
       ],
     };
   }
 
-  const clarity = scoreContentClarity(analysis);
-  const service = scoreServiceSpecificity(analysis, formInput);
-  const local = scoreLocalRelevance(analysis, formInput);
-  const trust = scoreTrustSignals(analysis);
-  const faq = scoreFaqDiscoverability(analysis);
+  // For no-URL reports, return all gaps but still run scoring
+  if (analysis.fetchError === "no_url_provided") {
+    const noUrlFindings: Finding[] = [
+      {
+        type: "gap",
+        category: "general",
+        label: "No website provided",
+        detail: "Analysis is based on the business name and city only. Add a website URL for a complete report.",
+        confidence: "high",
+        evidence: "No website URL was provided for this report.",
+        sourceSignal: "has_website",
+        ruleId: "website_present",
+      },
+    ];
+    return {
+      scores: {
+        overallScore: 0,
+        contentClarityScore: 0,
+        serviceSpecificityScore: 0,
+        localRelevanceScore: 0,
+        trustSignalScore: 0,
+        faqDiscoverabilityScore: 0,
+      },
+      findings: noUrlFindings,
+    };
+  }
 
-  // Weighted overall score
-  // Weights: content 25%, service 20%, local 20%, trust 20%, faq 15%
+  const clarity = scoreContentClarity(analysis, sourceUrl);
+  const service = scoreServiceSpecificity(analysis, formInput, sourceUrl);
+  const local = scoreLocalRelevance(analysis, formInput, sourceUrl);
+  const trust = scoreTrustSignals(analysis, sourceUrl);
+  const faq = scoreFaqDiscoverability(analysis, sourceUrl);
+
+  // Apply category-specific weights (falls back to defaults for generic)
+  const weights = CATEGORY_WEIGHTS[canonicalCategory] ?? DEFAULT_WEIGHTS;
+
   const overallScore = Math.round(
-    clarity.score * 0.25 +
-      service.score * 0.2 +
-      local.score * 0.2 +
-      trust.score * 0.2 +
-      faq.score * 0.15
+    clarity.score * weights.contentClarity +
+      service.score * weights.serviceSpecificity +
+      local.score * weights.localRelevance +
+      trust.score * weights.trustSignals +
+      faq.score * weights.faqDiscoverability
   );
 
   const findings: Finding[] = [
@@ -382,11 +614,13 @@ export function scoreWebsite(
 
 /**
  * Generate prioritized recommendations from gap findings.
+ * Uses category-specific templates when available, falls back to generic.
  * Returns up to 5 recommendations sorted by impact.
  */
 export function generateRecommendations(
   findings: Finding[],
-  _analysis: WebsiteAnalysis
+  _analysis: WebsiteAnalysis,
+  canonicalCategory: CanonicalCategory = "generic"
 ): Array<{
   priority: number;
   title: string;
@@ -394,7 +628,6 @@ export function generateRecommendations(
   impact: "high" | "medium" | "low";
   effort: "high" | "medium" | "low";
 }> {
-  // Map gap labels to specific recommendations
   const gapRecs: Record<
     string,
     {
@@ -469,6 +702,9 @@ export function generateRecommendations(
     },
   };
 
+  // Merge category-specific overrides — they key on ruleId, then map to gap label
+  const categoryOverrides = CATEGORY_REC_OVERRIDES[canonicalCategory] ?? {};
+
   const gaps = findings.filter((f) => f.type === "gap");
   const recs: Array<{
     priority: number;
@@ -485,17 +721,18 @@ export function generateRecommendations(
   };
 
   for (const gap of gaps) {
-    const rec = gapRecs[gap.label];
+    // Category override by ruleId takes priority over generic label lookup
+    const categoryRec: RecTemplate | undefined =
+      gap.ruleId ? categoryOverrides[gap.ruleId] : undefined;
+    const rec = categoryRec ?? gapRecs[gap.label];
     if (rec) recs.push({ ...rec, priority: 0 });
   }
 
-  // Sort by impact, then effort (low effort first)
   recs.sort((a, b) => {
     const impactDiff = impactOrder[a.impact] - impactOrder[b.impact];
     if (impactDiff !== 0) return impactDiff;
     return impactOrder[a.effort] - impactOrder[b.effort];
   });
 
-  // Assign priority numbers
   return recs.slice(0, 5).map((r, i) => ({ ...r, priority: i + 1 }));
 }

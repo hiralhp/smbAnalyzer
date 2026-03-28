@@ -30,7 +30,7 @@ const features = [
 const metrics = [
   { value: "5 min", label: "to get your report" },
   { value: "6", label: "scored dimensions" },
-  { value: "100%", label: "free for now" },
+  { value: "100%", label: "free" },
 ];
 
 export default function HomePage() {
