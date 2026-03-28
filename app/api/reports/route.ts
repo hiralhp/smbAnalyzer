@@ -1,0 +1,99 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/reports
+// Creates a new report from form input, then triggers async processing
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { runAnalysisPipeline } from "@/lib/analysis/pipeline";
+import type { ReportFormInput } from "@/lib/types";
+
+export async function POST(request: NextRequest) {
+  let formInput: ReportFormInput;
+
+  try {
+    formInput = (await request.json()) as ReportFormInput;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // Basic validation
+  if (!formInput.businessName?.trim()) {
+    return NextResponse.json(
+      { error: "businessName is required" },
+      { status: 400 }
+    );
+  }
+
+  let supabase;
+  try {
+    supabase = createClient();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[POST /api/reports] Supabase client error:", msg);
+    return NextResponse.json(
+      { error: `Database configuration error: ${msg}` },
+      { status: 500 }
+    );
+  }
+
+  // 1. Create business record
+  const { data: business, error: bizError } = await supabase
+    .from("businesses")
+    .insert({
+      name: formInput.businessName.trim(),
+      website_url: formInput.websiteUrl?.trim() || null,
+      category: formInput.category?.trim() || null,
+      city: formInput.city?.trim() || null,
+    })
+    .select()
+    .single();
+
+  if (bizError || !business) {
+    const detail = bizError?.message ?? "unknown error";
+    const hint = bizError?.hint ? ` Hint: ${bizError.hint}` : "";
+    console.error("[POST /api/reports] Business insert error:", bizError);
+    return NextResponse.json(
+      { error: `Database error: ${detail}${hint}` },
+      { status: 500 }
+    );
+  }
+
+  // 2. Create report record (pending)
+  const { data: report, error: reportError } = await supabase
+    .from("reports")
+    .insert({ business_id: business.id, status: "pending" })
+    .select()
+    .single();
+
+  if (reportError || !report) {
+    const detail = reportError?.message ?? "unknown error";
+    console.error("[POST /api/reports] Report insert error:", reportError);
+    return NextResponse.json(
+      { error: `Database error: ${detail}` },
+      { status: 500 }
+    );
+  }
+
+  // 3. Store report inputs
+  await supabase.from("report_inputs").insert({
+    report_id: report.id,
+    business_name: formInput.businessName.trim(),
+    website_url: formInput.websiteUrl?.trim() || null,
+    category: formInput.category?.trim() || null,
+    city: formInput.city?.trim() || null,
+    top_services: formInput.topServices?.filter(Boolean) || null,
+    competitor_urls: formInput.competitorUrls?.filter(Boolean) || null,
+    competitor_names: formInput.competitorNames?.filter(Boolean) || null,
+  });
+
+  // 4. Run pipeline synchronously — await it so the report is complete before
+  // the client navigates to the report page. Errors are caught inside the
+  // pipeline and stored in the DB as status="failed".
+  const reportId = report.id;
+  await runAnalysisPipeline(reportId, formInput).catch((err) => {
+    console.error("[POST /api/reports] Pipeline error for", reportId, err);
+  });
+
+  return NextResponse.json({ reportId }, { status: 201 });
+}
