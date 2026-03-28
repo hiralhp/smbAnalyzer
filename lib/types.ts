@@ -160,6 +160,51 @@ export interface CompetitorRecord {
   discoveryScore?: number;
 }
 
+// ── Business features (inferred, feature-led layer) ──────────────────────────
+// Inferred deterministically from WebsiteAnalysis. Primary driver of downstream
+// logic — recommendations, FAQ, query generation.
+// Category/subtype are secondary hints; features are the guardrails.
+
+export type PrimaryConversion =
+  | "visit"           // come in person (restaurant, retail, salon)
+  | "call"            // call to inquire (home services, lawyers)
+  | "book"            // book appointment (salon, dentist, fitness)
+  | "reserve"         // make a reservation (restaurant, hotel)
+  | "order"           // place an order (restaurant delivery, retail)
+  | "request_quote"   // get a quote/estimate (home services, movers)
+  | "submit_lead"     // fill out a form (real estate, finance)
+  | "buy_now"         // immediate purchase (e-commerce, retail)
+  | "subscribe"       // membership (gym, subscription)
+  | "unknown";
+
+export type TrustMode =
+  | "consumer_social_proof"  // reviews/testimonials primary (restaurant, salon)
+  | "credentialed"           // credentials primary (dentist, lawyer, med_spa)
+  | "regulated"              // license legally required (contractor, financial)
+  | "low_trust_barrier"      // low stakes, simple trust (cafe, retail)
+  | "mixed";                 // both credentials + social proof
+
+export interface BusinessFeatures {
+  // Content/offering signals
+  hasMenuOrCatalog: boolean;         // menu/order/delivery/takeout/product catalog
+  hasServicePages: boolean;          // dedicated service/treatment/solution pages
+  hasLocalIntent: boolean;           // city/location/address/map signals
+  hasHoursExpectation: boolean;      // hours/schedule/open/close info expected
+  hasContactExpectation: boolean;    // phone/email/contact form expected
+  hasBookingOrReservations: boolean; // book/reserve/appointment/schedule
+  hasQuoteIntent: boolean;           // quote/estimate/free estimate language
+  hasDelivery: boolean;              // delivery/takeout/online ordering
+  // Trust signals
+  requiresCredentials: boolean;      // licensed/insured/certified/bonded/accredited
+  // Behavioral inference
+  primaryConversion: PrimaryConversion;
+  trustMode: TrustMode;
+  // For query generation — specific terms detected from content
+  detectedBusinessTerms: string[];   // e.g. ["coffee", "espresso", "latte"]
+  // For debug output and future LLM handoff
+  featureEvidence: Record<string, string>;
+}
+
 // ── LLM outputs ───────────────────────────────────────────────────────────────
 
 export type ContentAssetType =

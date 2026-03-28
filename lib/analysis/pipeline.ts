@@ -27,6 +27,7 @@ import { computeQueryCoverage } from "@/lib/analysis/query-coverage";
 import { classifyCategory } from "@/lib/analysis/category-classifier";
 import { extractLocation } from "@/lib/analysis/location-extractor";
 import { generateFaqs } from "@/lib/analysis/faq-generator";
+import { inferBusinessFeatures } from "@/lib/analysis/business-features";
 import type {
   ReportFormInput,
   WebsiteAnalysis,
@@ -309,6 +310,9 @@ export async function runAnalysisPipeline(
       };
     }
 
+    // ── Step 1b: Infer business features (deterministic) ───────────────────
+    const businessFeatures = inferBusinessFeatures(websiteAnalysis);
+
     // ── Step 2: Update business name from scraped title ────────────────────
     let inferredName: string | undefined;
     if (!formInput.businessName && websiteAnalysis.title) {
@@ -380,12 +384,14 @@ export async function runAnalysisPipeline(
     const { scores, findings } = scoreWebsite(
       websiteAnalysis,
       effectiveFormInput,
-      canonicalCategory
+      canonicalCategory,
+      businessFeatures
     );
     const recommendations = generateRecommendations(
       findings,
       websiteAnalysis,
-      canonicalCategory
+      canonicalCategory,
+      businessFeatures
     );
     const scoreExplanation: ScoreExplanation = generateScoreExplanation(scores, findings);
 
@@ -446,6 +452,7 @@ export async function runAnalysisPipeline(
       keyword_counts: keywordCounts,
       scanned_page_type: scannedPageType,
       evidence_snapshot: evidenceSnapshot,
+      business_features: businessFeatures,
     });
 
     // 12b. Competitor analyses

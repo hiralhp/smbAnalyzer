@@ -17,6 +17,7 @@ import type {
   FindingConfidence,
   ReportFormInput,
   CanonicalCategory,
+  BusinessFeatures,
 } from "@/lib/types";
 import {
   DEFAULT_WEIGHTS,
@@ -160,7 +161,8 @@ function scoreContentClarity(a: WebsiteAnalysis, sourceUrl?: string): {
 function scoreServiceSpecificity(
   a: WebsiteAnalysis,
   formInput: ReportFormInput,
-  sourceUrl?: string
+  sourceUrl?: string,
+  businessFeatures?: BusinessFeatures
 ): { score: number; findings: Finding[] } {
   const services = formInput.topServices ?? [];
   const servicesProvided = services.length > 0;
@@ -173,6 +175,38 @@ function scoreServiceSpecificity(
 
   const servicesInHeadingsCondition =
     servicesProvided && !!matchingH2;
+
+  // Pricing rule — specialized for quote-intent businesses
+  const isQuoteBusiness = businessFeatures?.hasQuoteIntent ?? false;
+  const pricingRule: ScoredCondition = isQuoteBusiness
+    ? {
+        points: 5,
+        condition: a.hasPricing,
+        category: "service",
+        confidence: "high",
+        ruleId: "pricing_language",
+        sourceSignal: "pricing",
+        strengthLabel: "Estimate or quote CTA present",
+        strengthDetail: "Quote/estimate language helps AI recommend you when customers search for estimates.",
+        strengthEvidence: 'Estimate or quote-related terms detected (e.g. "free estimate", "get a quote", "no obligation").',
+        gapLabel: "No free estimate or quote CTA",
+        gapDetail: "Adding 'Free Estimate' or 'Get a Quote' language is critical — AI uses this to recommend you for estimate-request searches.",
+        gapEvidence: 'No estimate or quote language found ("free estimate", "get a quote", "no obligation estimate").',
+      }
+    : {
+        points: 5,
+        condition: a.hasPricing,
+        category: "service",
+        confidence: "medium",
+        ruleId: "pricing_language",
+        sourceSignal: "pricing",
+        strengthLabel: "Pricing language present",
+        strengthDetail: "Pricing context helps AI qualify your business for budget-aware queries.",
+        strengthEvidence: 'Pricing-related terms detected (e.g. "quote", "estimate", "$", "starting at").',
+        gapLabel: "No pricing language detected",
+        gapDetail: "Adding pricing context (even ranges) helps AI match your business to intent-specific searches.",
+        gapEvidence: 'No pricing-related terms found ("price", "cost", "quote", "estimate", "$").',
+      };
 
   const rules: ScoredCondition[] = [
     {
@@ -207,20 +241,7 @@ function scoreServiceSpecificity(
         ? `None of the provided services (${services.slice(0, 3).join(", ")}) were found in any H2 heading.`
         : "No top services provided — cannot check heading prominence.",
     },
-    {
-      points: 5,
-      condition: a.hasPricing,
-      category: "service",
-      confidence: "medium",
-      ruleId: "pricing_language",
-      sourceSignal: "pricing",
-      strengthLabel: "Pricing language present",
-      strengthDetail: "Pricing context helps AI qualify your business for budget-aware queries.",
-      strengthEvidence: 'Pricing-related terms detected (e.g. "quote", "estimate", "$", "starting at").',
-      gapLabel: "No pricing language detected",
-      gapDetail: "Adding pricing context (even ranges) helps AI match your business to intent-specific searches.",
-      gapEvidence: 'No pricing-related terms found ("price", "cost", "quote", "estimate", "$").',
-    },
+    pricingRule,
   ];
 
   const { rawScore, findings } = applyRules(rules, 30, sourceUrl);
@@ -303,10 +324,18 @@ function scoreLocalRelevance(
 
 // ── Sub-score: Trust Signals (max 25 pts) ────────────────────────────────────
 
-function scoreTrustSignals(a: WebsiteAnalysis, sourceUrl?: string): {
-  score: number;
-  findings: Finding[];
-} {
+function scoreTrustSignals(
+  a: WebsiteAnalysis,
+  sourceUrl?: string,
+  businessFeatures?: BusinessFeatures
+): { score: number; findings: Finding[] } {
+  // Credential rule is elevated to high confidence for regulated/credentialed businesses
+  const isRegulated = businessFeatures?.requiresCredentials ?? false;
+  const credentialConfidence: FindingConfidence = isRegulated ? "high" : "medium";
+  const credentialGapDetail = isRegulated
+    ? "License and insurance credentials are expected in your industry — AI systems treat their absence as a significant trust gap."
+    : 'Mentioning licensing, certifications, or guarantees ("licensed & insured") significantly boosts AI trust scoring.';
+
   const rules: ScoredCondition[] = [
     {
       points: 8,
@@ -340,14 +369,14 @@ function scoreTrustSignals(a: WebsiteAnalysis, sourceUrl?: string): {
       points: 6,
       condition: a.hasTrustSignals,
       category: "trust",
-      confidence: "medium",
+      confidence: credentialConfidence,
       ruleId: "trust_keywords_present",
       sourceSignal: "trust_keywords",
       strengthLabel: "Professional trust indicators",
       strengthDetail: "Words like licensed, certified, insured, or guaranteed were detected.",
       strengthEvidence: 'Professional credential language found (e.g. "licensed", "certified", "insured", "accredited").',
       gapLabel: "No professional trust indicators",
-      gapDetail: 'Mentioning licensing, certifications, or guarantees ("licensed & insured") significantly boosts AI trust scoring.',
+      gapDetail: credentialGapDetail,
       gapEvidence: 'No credential language found ("licensed", "certified", "insured", "accredited", "guaranteed", "BBB").',
     },
     {
@@ -518,7 +547,8 @@ export function generateScoreExplanation(
 export function scoreWebsite(
   analysis: WebsiteAnalysis,
   formInput: ReportFormInput,
-  canonicalCategory: CanonicalCategory = "generic"
+  canonicalCategory: CanonicalCategory = "generic",
+  businessFeatures?: BusinessFeatures
 ): { scores: ScoreBreakdown; findings: Finding[] } {
   const sourceUrl = analysis.url || undefined;
 
@@ -575,9 +605,9 @@ export function scoreWebsite(
   }
 
   const clarity = scoreContentClarity(analysis, sourceUrl);
-  const service = scoreServiceSpecificity(analysis, formInput, sourceUrl);
+  const service = scoreServiceSpecificity(analysis, formInput, sourceUrl, businessFeatures);
   const local = scoreLocalRelevance(analysis, formInput, sourceUrl);
-  const trust = scoreTrustSignals(analysis, sourceUrl);
+  const trust = scoreTrustSignals(analysis, sourceUrl, businessFeatures);
   const faq = scoreFaqDiscoverability(analysis, sourceUrl);
 
   // Apply category-specific weights (falls back to defaults for generic)
@@ -620,7 +650,8 @@ export function scoreWebsite(
 export function generateRecommendations(
   findings: Finding[],
   _analysis: WebsiteAnalysis,
-  canonicalCategory: CanonicalCategory = "generic"
+  canonicalCategory: CanonicalCategory = "generic",
+  businessFeatures?: BusinessFeatures
 ): Array<{
   priority: number;
   title: string;
@@ -628,6 +659,29 @@ export function generateRecommendations(
   impact: "high" | "medium" | "low";
   effort: "high" | "medium" | "low";
 }> {
+  const primaryConversion = businessFeatures?.primaryConversion;
+  const isQuoteBusiness = businessFeatures?.hasQuoteIntent ?? false;
+  const isBookingBusiness = businessFeatures?.hasBookingOrReservations ?? false;
+  const isRegulated = businessFeatures?.requiresCredentials ?? false;
+
+  // FAQ description — specialized for booking businesses
+  const faqDescription = isBookingBusiness
+    ? "A FAQ section is the highest-impact change for AI discoverability. Include questions like 'How do I book an appointment?', 'What should I bring?', and 'Do you take walk-ins?' — these are exactly the queries AI assistants answer."
+    : "A FAQ section is the highest-impact change for AI discoverability. AI assistants frequently pull FAQ content directly to answer user questions. Write 6–10 questions your customers actually ask.";
+
+  // Credential rec — more urgent for regulated businesses
+  const credentialDescription = isRegulated
+    ? "Display your license number, insurance status, and any certifications prominently — ideally in your header or footer. In your industry, customers expect to see credentials before calling, and AI systems weight their presence heavily."
+    : 'Prominently display your license number, insurance status, certifications, or guarantees. Phrases like "Licensed, bonded & insured" directly boost AI trust signals.';
+
+  // Pricing rec — specialized for quote businesses
+  const pricingTitle = isQuoteBusiness
+    ? "Add a free estimate call-to-action"
+    : "Add pricing context to your site";
+  const pricingDescription = isQuoteBusiness
+    ? "Add a prominent 'Free Estimate' or 'Get a Quote' button to your homepage and service pages. Customers searching for estimates expect to see this CTA — AI assistants use its presence to recommend you for those queries."
+    : 'Include pricing ranges, starting prices, or at least an "affordable" or "competitive rates" statement. Pricing context helps AI match your business to budget-specific searches.';
+
   const gapRecs: Record<
     string,
     {
@@ -639,8 +693,7 @@ export function generateRecommendations(
   > = {
     "No FAQ section detected": {
       title: "Add a FAQ page or section",
-      description:
-        "A FAQ section is the highest-impact change for AI discoverability. AI assistants frequently pull FAQ content directly to answer user questions. Write 6–10 questions your customers actually ask.",
+      description: faqDescription,
       impact: "high",
       effort: "low",
     },
@@ -660,9 +713,8 @@ export function generateRecommendations(
     },
     "No professional trust indicators": {
       title: "Add trust credentials to your site",
-      description:
-        'Prominently display your license number, insurance status, certifications, or guarantees. Phrases like "Licensed, bonded & insured" directly boost AI trust signals.',
-      impact: "medium",
+      description: credentialDescription,
+      impact: isRegulated ? "high" : "medium",
       effort: "low",
     },
     "Location not clearly stated": {
@@ -694,10 +746,15 @@ export function generateRecommendations(
       effort: "low",
     },
     "No pricing language detected": {
-      title: "Add pricing context to your site",
-      description:
-        'Include pricing ranges, starting prices, or at least an "affordable" or "competitive rates" statement. Pricing context helps AI match your business to budget-specific searches.',
+      title: pricingTitle,
+      description: pricingDescription,
       impact: "medium",
+      effort: "low",
+    },
+    "No free estimate or quote CTA": {
+      title: pricingTitle,
+      description: pricingDescription,
+      impact: "high",
       effort: "low",
     },
   };
