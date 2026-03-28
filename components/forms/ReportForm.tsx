@@ -28,25 +28,21 @@ const CATEGORIES = [
 ];
 
 interface FormState {
-  businessName: string;
   websiteUrl: string;
   category: string;
   city: string;
   topServices: string;
   competitorUrls: string;
-  competitorNames: string;
 }
 
 export function ReportForm() {
   const router = useRouter();
   const [form, setForm] = useState<FormState>({
-    businessName: "",
     websiteUrl: "",
     category: "",
     city: "",
     topServices: "",
     competitorUrls: "",
-    competitorNames: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,16 +58,15 @@ export function ReportForm() {
     e.preventDefault();
     setError(null);
 
-    if (!form.businessName.trim()) {
-      setError("Business name is required.");
+    if (!form.websiteUrl.trim()) {
+      setError("Website URL is required.");
       return;
     }
 
     setSubmitting(true);
 
     const payload = {
-      businessName: form.businessName.trim(),
-      websiteUrl: form.websiteUrl.trim() || undefined,
+      websiteUrl: form.websiteUrl.trim(),
       category: form.category || undefined,
       city: form.city.trim() || undefined,
       topServices: form.topServices
@@ -79,10 +74,6 @@ export function ReportForm() {
         .map((s) => s.trim())
         .filter(Boolean),
       competitorUrls: form.competitorUrls
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean),
-      competitorNames: form.competitorNames
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean),
@@ -118,22 +109,7 @@ export function ReportForm() {
 
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Business name <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            name="businessName"
-            value={form.businessName}
-            onChange={handleChange}
-            placeholder="e.g. Smith HVAC Services"
-            className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Website URL
+            Website URL <span className="text-red-500">*</span>
           </label>
           <input
             type="url"
@@ -142,9 +118,10 @@ export function ReportForm() {
             onChange={handleChange}
             placeholder="https://yourwebsite.com"
             className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400"
+            required
           />
           <p className="text-xs text-slate-400 mt-1">
-            We&apos;ll analyze your site for AI discoverability signals.
+            We&apos;ll analyze your site and extract your business name automatically.
           </p>
         </div>
 
@@ -251,23 +228,7 @@ export function ReportForm() {
                 rows={3}
                 className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400 resize-none font-mono text-xs"
               />
-              <p className="text-xs text-slate-400 mt-1">One URL per line.</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                Competitor names
-              </label>
-              <textarea
-                name="competitorNames"
-                value={form.competitorNames}
-                onChange={handleChange}
-                placeholder={"Competitor One\nCompetitor Two"}
-                rows={3}
-                className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400 resize-none text-xs"
-              />
-              <p className="text-xs text-slate-400 mt-1">
-                Match order with URLs above.
-              </p>
+              <p className="text-xs text-slate-400 mt-1">One URL per line. Names are extracted automatically.</p>
             </div>
           </div>
         )}

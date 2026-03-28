@@ -18,12 +18,24 @@ export async function POST(request: NextRequest) {
   }
 
   // Basic validation
-  if (!formInput.businessName?.trim()) {
+  if (!formInput.websiteUrl?.trim()) {
     return NextResponse.json(
-      { error: "businessName is required" },
+      { error: "websiteUrl is required" },
       { status: 400 }
     );
   }
+
+  // Derive a placeholder business name from the URL — pipeline will overwrite
+  // it with the scraped page title once the website is fetched.
+  function domainFromUrl(url: string): string {
+    try {
+      return new URL(url.startsWith("http") ? url : `https://${url}`)
+        .hostname.replace(/^www\./, "");
+    } catch {
+      return url;
+    }
+  }
+  const placeholderName = formInput.businessName?.trim() || domainFromUrl(formInput.websiteUrl.trim());
 
   let supabase;
   try {
@@ -41,7 +53,7 @@ export async function POST(request: NextRequest) {
   const { data: business, error: bizError } = await supabase
     .from("businesses")
     .insert({
-      name: formInput.businessName.trim(),
+      name: placeholderName,
       website_url: formInput.websiteUrl?.trim() || null,
       category: formInput.category?.trim() || null,
       city: formInput.city?.trim() || null,
@@ -78,7 +90,7 @@ export async function POST(request: NextRequest) {
   // 3. Store report inputs
   await supabase.from("report_inputs").insert({
     report_id: report.id,
-    business_name: formInput.businessName.trim(),
+    business_name: placeholderName,
     website_url: formInput.websiteUrl?.trim() || null,
     category: formInput.category?.trim() || null,
     city: formInput.city?.trim() || null,

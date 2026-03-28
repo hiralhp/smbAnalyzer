@@ -108,12 +108,6 @@ export default function HomePage() {
                 />
               </svg>
             </Link>
-            <Link
-              href="/report/22222222-2222-2222-2222-222222222222"
-              className="inline-flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-700 font-semibold px-8 py-4 rounded-xl transition-colors text-base border border-slate-300"
-            >
-              See a sample report
-            </Link>
           </div>
 
           <p className="text-xs text-slate-400 mt-5">

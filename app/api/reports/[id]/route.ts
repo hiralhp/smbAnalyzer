@@ -140,7 +140,7 @@ export async function GET(
       .select("*")
       .eq("report_id", id)
       .eq("is_competitor", true)
-      .order("created_at");
+      .order("fetched_at");
 
     if (competitorRows?.length) {
       report.competitorSignals = competitorRows.map(

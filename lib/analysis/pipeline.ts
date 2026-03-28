@@ -61,6 +61,14 @@ export async function runAnalysisPipeline(
       };
     }
 
+    // ── Update business name from scraped title ────────────────────────────
+    if (!formInput.businessName && websiteAnalysis.title) {
+      await supabase
+        .from("businesses")
+        .update({ name: websiteAnalysis.title })
+        .eq("id", (await supabase.from("reports").select("business_id").eq("id", reportId).single()).data?.business_id);
+    }
+
     // ── Step 2: Scrape competitors ─────────────────────────────────────────
     const competitorAnalyses: WebsiteAnalysis[] = [];
     const competitorUrls = formInput.competitorUrls ?? [];
@@ -68,11 +76,12 @@ export async function runAnalysisPipeline(
     for (let i = 0; i < competitorUrls.length; i++) {
       const url = competitorUrls[i];
       if (!url) continue;
-      const name = formInput.competitorNames?.[i] ?? `Competitor ${i + 1}`;
-      const analysis = await scrapeWebsite(url, {
-        isCompetitor: true,
-        competitorName: name,
-      });
+      const analysis = await scrapeWebsite(url, { isCompetitor: true });
+      // Use scraped title, then domain, then generic fallback for competitor name
+      const name = formInput.competitorNames?.[i]
+        || analysis.title
+        || url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0];
+      analysis.competitorName = name;
       competitorAnalyses.push(analysis);
     }
 

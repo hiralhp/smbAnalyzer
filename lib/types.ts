@@ -5,7 +5,7 @@
 // ── Form input ────────────────────────────────────────────────────────────────
 
 export interface ReportFormInput {
-  businessName: string;
+  businessName?: string;
   websiteUrl: string;
   category: string;
   city: string;
