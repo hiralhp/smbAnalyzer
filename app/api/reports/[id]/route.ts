@@ -43,15 +43,18 @@ export async function GET(
     return NextResponse.json({ error: "Report not found" }, { status: 404 });
   }
 
-  const business = Array.isArray(reportRow.businesses)
-    ? reportRow.businesses[0]
-    : reportRow.businesses;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const row = reportRow as any;
+
+  const business = Array.isArray(row.businesses)
+    ? row.businesses[0]
+    : row.businesses;
 
   const report: Report = {
-    id: reportRow.id,
-    status: reportRow.status as Report["status"],
-    errorMessage: reportRow.error_message ?? undefined,
-    createdAt: reportRow.created_at,
+    id: row.id,
+    status: row.status as Report["status"],
+    errorMessage: row.error_message ?? undefined,
+    createdAt: row.created_at,
     business: {
       name: business?.name ?? "Unknown",
       websiteUrl: business?.website_url ?? undefined,
@@ -61,7 +64,7 @@ export async function GET(
   };
 
   // Only fetch detail data if report is complete
-  if (reportRow.status === "complete") {
+  if (row.status === "complete") {
     // Scores + explanation
     const { data: scores } = await supabase
       .from("report_scores")
