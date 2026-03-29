@@ -4,30 +4,18 @@ import Link from "next/link";
 import type { Report } from "@/lib/types";
 import { ScoreRing } from "@/components/ui/ScoreRing";
 import { ScoreBar } from "@/components/ui/ScoreBar";
-import { Badge } from "@/components/ui/Badge";
 import {
   impactBadgeClass,
   effortBadgeClass,
   displayUrl,
 } from "@/lib/utils";
-import { CompetitorComparison } from "./CompetitorComparison";
 import { QueryCoverage } from "./QueryCoverage";
-import { FaqSection } from "./FaqSection";
+import { LlmCompetitorSection } from "./LlmCompetitorSection";
+import { WinLossSection } from "./WinLossSection";
 
 interface ReportCompleteProps {
   report: Report;
 }
-
-const SIGNAL_LABELS: Record<string, string> = {
-  hasServicePages: "Service pages",
-  hasFaq: "FAQ section",
-  hasLocationMention: "Location signals",
-  hasTrustSignals: "Trust credentials",
-  hasContactInfo: "Contact information",
-  hasHours: "Business hours",
-  hasPricing: "Pricing language",
-  hasTestimonials: "Customer reviews",
-};
 
 const CONTENT_ASSET_LABELS: Record<string, string> = {
   faq: "FAQ Section",
@@ -37,11 +25,16 @@ const CONTENT_ASSET_LABELS: Record<string, string> = {
   none: "Content Asset",
 };
 
-export function ReportComplete({ report }: ReportCompleteProps) {
-  const { business, scores, scoreExplanation, findings, recommendations, llmOutput, websiteSignals, competitorSignals, queryCoverage, faqs } = report;
+// Filter out pure SEO-structural gaps — not directly AI visibility signals
+const SEO_STRUCTURAL = /\bh1\b|\bh2\b|heading count|meta description|page title|title tag|title length/i;
 
-  const strengths = findings?.filter((f) => f.type === "strength") ?? [];
+export function ReportComplete({ report }: ReportCompleteProps) {
+  const { business, scores, scoreExplanation, findings, recommendations, llmOutput, websiteSignals, competitorSignals, queryCoverage, llmCompetitorAnalysis } = report;
+
   const gaps = findings?.filter((f) => f.type === "gap") ?? [];
+  const aiGaps = gaps.filter((g) => !SEO_STRUCTURAL.test(g.label)).slice(0, 4);
+
+  const topRecs = recommendations?.slice(0, 3) ?? [];
 
   const assetLabel = llmOutput?.contentAssetType
     ? CONTENT_ASSET_LABELS[llmOutput.contentAssetType] ?? "Content Asset"
@@ -119,11 +112,8 @@ export function ReportComplete({ report }: ReportCompleteProps) {
 
           {/* Positioning summary */}
           {llmOutput?.positioningSummary && (
-            <div className="px-8 py-6 border-t border-slate-100">
-              <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                Current Positioning
-              </h2>
-              <p className="text-slate-700 leading-relaxed">
+            <div className="px-8 py-5 border-t border-slate-100">
+              <p className="text-slate-600 leading-relaxed text-sm">
                 {llmOutput.positioningSummary}
               </p>
             </div>
@@ -135,69 +125,66 @@ export function ReportComplete({ report }: ReportCompleteProps) {
           {/* Left column — wide */}
           <div className="lg:col-span-2 space-y-8">
 
-            {/* Strengths */}
-            {strengths.length > 0 && (
-              <Section title="Strengths detected" icon="✓" iconBg="bg-emerald-500">
+            {/* PRIMARY: AI Competitor Visibility */}
+            {llmCompetitorAnalysis && llmCompetitorAnalysis.length > 0 && (
+              <LlmCompetitorSection
+                rows={llmCompetitorAnalysis}
+                businessName={business.name}
+              />
+            )}
+
+            {/* Why You Win / Lose vs Competitors */}
+            {llmCompetitorAnalysis && llmCompetitorAnalysis.length > 0 && findings && (
+              <WinLossSection
+                rows={llmCompetitorAnalysis}
+                businessName={business.name}
+                findings={findings}
+              />
+            )}
+
+            {/* Key Gaps Affecting AI Visibility */}
+            {aiGaps.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-7 h-7 rounded-lg bg-rose-600 flex items-center justify-center flex-shrink-0">
+                    <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <h2 className="font-semibold text-slate-900">Key gaps affecting AI visibility</h2>
+                </div>
                 <div className="space-y-3">
-                  {strengths.map((s, i) => (
+                  {aiGaps.map((g, i) => (
                     <div key={i} className="flex gap-3">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <svg className="w-2.5 h-2.5 text-emerald-600" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      <div className="w-5 h-5 rounded-full bg-rose-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <svg className="w-2.5 h-2.5 text-rose-600" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
                         </svg>
                       </div>
                       <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-medium text-slate-800">{s.label}</p>
-                          {s.confidence && <ConfidenceBadge confidence={s.confidence} />}
-                        </div>
-                        {s.evidence
-                          ? <p className="text-xs text-slate-500 mt-0.5">{s.evidence}</p>
-                          : s.detail && <p className="text-xs text-slate-500 mt-0.5">{s.detail}</p>
-                        }
+                        <p className="text-sm font-medium text-slate-800">{g.label}</p>
+                        {(g.evidence || g.detail) && (
+                          <p className="text-xs text-slate-500 mt-0.5">{g.evidence ?? g.detail}</p>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
-              </Section>
+              </div>
             )}
 
-            {/* Gaps */}
-            {gaps.length > 0 && (
-              <Section title="Opportunities" icon="!" iconBg="bg-amber-500">
-                <div className="space-y-3">
-                  {gaps.map((g, i) => (
-                    <div key={i} className="flex gap-3">
-                      <div className="w-5 h-5 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <svg className="w-2.5 h-2.5 text-amber-600" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                        </svg>
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-medium text-slate-800">{g.label}</p>
-                          {g.confidence && <ConfidenceBadge confidence={g.confidence} />}
-                        </div>
-                        {g.evidence
-                          ? <p className="text-xs text-slate-500 mt-0.5">{g.evidence}</p>
-                          : g.detail && <p className="text-xs text-slate-500 mt-0.5">{g.detail}</p>
-                        }
-                      </div>
-                    </div>
-                  ))}
+            {/* Recommendations — top 3 */}
+            {topRecs.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-7 h-7 rounded-lg bg-brand-600 flex items-center justify-center flex-shrink-0 text-white text-xs font-bold">
+                    →
+                  </div>
+                  <h2 className="font-semibold text-slate-900">Prioritized recommendations</h2>
                 </div>
-              </Section>
-            )}
-
-            {/* Recommendations */}
-            {recommendations && recommendations.length > 0 && (
-              <Section title="Prioritized recommendations" icon="→" iconBg="bg-brand-600">
                 <div className="space-y-4">
-                  {recommendations.map((rec, i) => (
-                    <div
-                      key={i}
-                      className="border border-slate-200 rounded-xl p-5 bg-white"
-                    >
+                  {topRecs.map((rec, i) => (
+                    <div key={i} className="border border-slate-200 rounded-xl p-5 bg-white">
                       <div className="flex items-start gap-3 mb-2">
                         <div className="w-6 h-6 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5">
                           {rec.priority}
@@ -226,17 +213,7 @@ export function ReportComplete({ report }: ReportCompleteProps) {
                     </div>
                   ))}
                 </div>
-              </Section>
-            )}
-
-            {/* FAQ section */}
-            {faqs && faqs.length > 0 && (
-              <FaqSection faqs={faqs} businessName={business.name} />
-            )}
-
-            {/* Competitor comparison */}
-            {websiteSignals && competitorSignals && competitorSignals.length > 0 && (
-              <CompetitorComparison you={websiteSignals} competitors={competitorSignals} />
+              </div>
             )}
 
             {/* Query coverage */}
@@ -246,18 +223,22 @@ export function ReportComplete({ report }: ReportCompleteProps) {
 
             {/* Content Asset */}
             {llmOutput?.contentAssetDraft && llmOutput.contentAssetType !== "none" && (
-              <Section title={`Recommended content: ${assetLabel}`} icon="✍" iconBg="bg-purple-600">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-7 h-7 rounded-lg bg-purple-600 flex items-center justify-center flex-shrink-0 text-white text-xs font-bold">
+                    ✍
+                  </div>
+                  <h2 className="font-semibold text-slate-900">Recommended content: {assetLabel}</h2>
+                </div>
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
                   <p className="text-xs text-slate-400 mb-3 font-medium uppercase tracking-wide">
                     Ready-to-use draft · edit and publish as-is
                   </p>
-                  <div className="prose prose-sm prose-slate max-w-none">
-                    <pre className="whitespace-pre-wrap font-sans text-sm text-slate-700 leading-relaxed">
-                      {llmOutput.contentAssetDraft}
-                    </pre>
-                  </div>
+                  <pre className="whitespace-pre-wrap font-sans text-sm text-slate-700 leading-relaxed">
+                    {llmOutput.contentAssetDraft}
+                  </pre>
                 </div>
-              </Section>
+              </div>
             )}
           </div>
 
@@ -282,76 +263,6 @@ export function ReportComplete({ report }: ReportCompleteProps) {
                     {scoreExplanation.overall}
                   </p>
                 )}
-              </div>
-            )}
-
-            {/* Website signals */}
-            {websiteSignals && !websiteSignals.fetchError && (
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-5">
-                  Website signals
-                </h2>
-
-                {/* Meta info */}
-                {(websiteSignals.title || websiteSignals.metaDescription) && (
-                  <div className="mb-4 pb-4 border-b border-slate-100 space-y-2">
-                    {websiteSignals.title && (
-                      <div>
-                        <p className="text-xs text-slate-400 font-medium">Title</p>
-                        <p className="text-xs text-slate-700 mt-0.5 leading-snug">
-                          {websiteSignals.title}
-                        </p>
-                      </div>
-                    )}
-                    {websiteSignals.metaDescription && (
-                      <div>
-                        <p className="text-xs text-slate-400 font-medium">Meta description</p>
-                        <p className="text-xs text-slate-700 mt-0.5 leading-snug line-clamp-2">
-                          {websiteSignals.metaDescription}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Signal checklist */}
-                <div className="grid grid-cols-1 gap-2">
-                  {(
-                    Object.entries(SIGNAL_LABELS) as [
-                      keyof typeof websiteSignals,
-                      string
-                    ][]
-                  ).map(([key, label]) => {
-                    const value = websiteSignals[key as keyof typeof websiteSignals];
-                    const detected = value === true;
-                    return (
-                      <div key={key} className="flex items-center gap-2.5">
-                        <div
-                          className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 ${
-                            detected ? "bg-emerald-100" : "bg-slate-100"
-                          }`}
-                        >
-                          {detected ? (
-                            <svg className="w-2.5 h-2.5 text-emerald-600" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                            </svg>
-                          ) : (
-                            <svg className="w-2 h-2 text-slate-400" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                            </svg>
-                          )}
-                        </div>
-                        <span
-                          className={`text-xs ${
-                            detected ? "text-slate-700" : "text-slate-400"
-                          }`}
-                        >
-                          {label}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
               </div>
             )}
 
@@ -393,47 +304,6 @@ export function ReportComplete({ report }: ReportCompleteProps) {
         </div>
 
       </main>
-    </div>
-  );
-}
-
-// ── Helper components ─────────────────────────────────────────────────────────
-
-function ConfidenceBadge({ confidence }: { confidence: "high" | "medium" | "low" }) {
-  const styles = {
-    high: "bg-slate-100 text-slate-500",
-    medium: "bg-slate-100 text-slate-400",
-    low: "bg-slate-50 text-slate-300",
-  };
-  return (
-    <span className={`text-xs px-1.5 py-0.5 rounded font-normal ${styles[confidence]}`}>
-      {confidence} confidence
-    </span>
-  );
-}
-
-function Section({
-  title,
-  icon,
-  iconBg,
-  children,
-}: {
-  title: string;
-  icon: string;
-  iconBg: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-      <div className="flex items-center gap-3 mb-5">
-        <div
-          className={`w-7 h-7 rounded-lg ${iconBg} flex items-center justify-center text-white text-xs font-bold`}
-        >
-          {icon}
-        </div>
-        <h2 className="font-semibold text-slate-900">{title}</h2>
-      </div>
-      {children}
     </div>
   );
 }

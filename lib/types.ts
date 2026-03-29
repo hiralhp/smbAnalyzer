@@ -2,35 +2,74 @@
 // Shared types for the AI Visibility Report application
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Category classification ───────────────────────────────────────────────────
-// Re-exported here so consumers only need to import from @/lib/types
+// ── Website pattern (routing key for FAQ + query coverage) ───────────────────
 
-export type CanonicalCategory =
-  | "restaurant_cafe"
-  | "dentist"
-  | "med_spa"
-  | "home_services"
-  | "lawyer"
-  | "salon"
-  | "finance"
-  | "fitness"
+export type WebsitePattern =
+  | "software_product"
+  | "local_physical_business"
+  | "appointment_service"
+  | "hospitality_booking"
+  | "catalog_ecommerce"
+  | "content_brand"
+  | "generic_unknown";
+
+// ── Archetype classification ──────────────────────────────────────────────────
+
+export type BusinessArchetype =
+  | "food_drink"
+  | "local_service"
+  | "health_beauty"
   | "retail"
-  | "pet_services"
-  | "childcare"
-  | "generic";
+  | "hospitality"
+  | "professional_service"
+  | "home_service"
+  | "fitness"
+  | "automotive"
+  | "education"
+  | "events"
+  | "generic_unknown";
 
-export interface CategoryClassification {
-  canonicalCategory: CanonicalCategory;
-  confidence: FindingConfidence;
-  evidence: string;
+export interface ClassificationEvidence {
+  keywordHits: string[];
+  headingHits: string[];
+  structuredDataHits: string[];
+  navHits: string[];
+  serviceTermHits: string[];
+  commerceHits: string[];
+  bookingHits: string[];
+  menuHits: string[];
+  locationHits: string[];
+  trustHits: string[];
+}
+
+export interface ArchetypeClassification {
+  archetype: BusinessArchetype;
+  archetypeConfidence: number;  // 0–1
+  subtype: string | null;
+  subtypeConfidence: number;    // 0–1 (0 if no subtype)
+  evidence: ClassificationEvidence;
 }
 
 // ── Location extraction ───────────────────────────────────────────────────────
 
 export interface ExtractedLocation {
   city: string;
-  source: "user_input" | "title" | "heading" | "meta" | "body";
+  source: "user_input" | "schema" | "title" | "heading" | "meta" | "body";
   confidence: FindingConfidence;
+}
+
+// ── Groq classification (fast category validation / inference layer) ──────────
+
+export interface GroqClassificationResult {
+  /** Specific business category: "hotel", "restaurant", "dentist", "plumber", etc. */
+  category: string;
+  /** Canonical sector matching BusinessProfile.sector */
+  sector: string;
+  /** Specific subtype — only populated when confidence is "high" */
+  subtype: string | null;
+  confidence: "high" | "medium" | "low";
+  /** One-sentence reasoning for the classification */
+  reasoning: string;
 }
 
 // ── FAQ ───────────────────────────────────────────────────────────────────────
@@ -65,6 +104,19 @@ export interface WebsiteAnalysis {
   // Extracted content
   title?: string;
   metaDescription?: string;
+  ogSiteName?: string;
+  schemaOrgName?: string;
+  /** Structured address from schema.org JSON-LD or microdata (highest-confidence location source) */
+  schemaOrgAddress?: {
+    street?: string;
+    city?: string;
+    state?: string;  // may be full name ("Tennessee") — normalize to abbreviation downstream
+    zip?: string;
+  };
+  /** <meta name="city"> — common on hotel/local-business sites */
+  metaCity?: string;
+  /** <meta name="state"> — may be full state name */
+  metaState?: string;
   h1Headings: string[];
   h2Headings: string[];
   bodyTextSample?: string;
@@ -78,6 +130,12 @@ export interface WebsiteAnalysis {
   hasHours: boolean;
   hasPricing: boolean;
   hasTestimonials: boolean;
+
+  // Pattern-routing signals (detected from full HTML before script removal)
+  mentionsIntegrations?: boolean;   // "integrates with", "connects to", API language
+  mentionsAppointments?: boolean;   // "book an appointment", "schedule a visit"
+  mentionsRoomsOrStays?: boolean;   // "room", "suite", "check-in", "nightly"
+  mentionsContentOrBlog?: boolean;  // "blog", "newsletter", "podcast", "subscribe"
 
   // Links
   internalLinks: string[];
@@ -205,6 +263,51 @@ export interface BusinessFeatures {
   featureEvidence: Record<string, string>;
 }
 
+// ── Grok enhancement layer ────────────────────────────────────────────────────
+// Input: normalized deterministic findings (never raw HTML)
+// Output: narrative/presentation enhancements (never new facts)
+
+export interface GrokEnhancementInput {
+  business: {
+    name: string;
+    category: string | null;
+    subtype: string | null;
+    location: string;
+  };
+  scores: {
+    overall: number;
+    contentClarity: number;
+    serviceSpecificity: number;
+    localRelevance: number;
+    trustSignals: number;
+    faqDiscoverability: number;
+  };
+  strengths: Array<{ label: string; detail?: string }>;
+  gaps: Array<{ label: string; detail?: string }>;
+  recommendations: Array<{
+    title: string;
+    description: string;
+    impact: "high" | "medium" | "low";
+    effort: "high" | "medium" | "low";
+  }>;
+  faq_questions: string[];
+}
+
+/** Grok enhancement outputs — optional overlay on the deterministic report. */
+export interface GrokEnhancement {
+  /** Polished 2-4 sentence positioning summary grounded in detected signals */
+  enhanced_positioning_summary?: string;
+  /** Improved recommendation explanations keyed by exact recommendation title */
+  enhanced_recommendation_explanations?: Record<string, string>;
+  /** Draft FAQ answers keyed by question */
+  enhanced_faq_answers?: Array<{ question: string; answer: string }>;
+  /** Optional quick-wins vs bigger-lifts bucketing (titles only, no reordering) */
+  optional_quick_wins_bucket?: {
+    quick_wins: string[];
+    bigger_lifts: string[];
+  };
+}
+
 // ── LLM outputs ───────────────────────────────────────────────────────────────
 
 export type ContentAssetType =
@@ -222,6 +325,30 @@ export interface LlmReportSummary {
   contentAssetDraft: string;
 }
 
+// ── Business profile (multi-dimensional, replaces single-category system) ─────
+
+export type BusinessModel =
+  | "venue_experience"       // restaurant, bar, coffee shop — menu/catalog primary
+  | "accommodation"          // hotel, B&B, vacation rental — rooms/rates primary
+  | "transactional_service"  // plumber, electrician, mover — service pages primary
+  | "appointment_based"      // salon, dentist, gym — services/treatments page primary
+  | "retail_product"         // retail store, e-commerce — product catalog primary
+  | "professional_advisory"  // lawyer, accountant, consultant — services + credentials
+  | "unknown";               // weak signal / fallback
+
+export interface BusinessProfile {
+  sector: string | null;        // food_and_beverage | home_services | ... | null
+  subtype: string | null;       // features.detectedBusinessTerms[0] or null
+  business_model: BusinessModel; // see BusinessModel type above
+  offering_model: string[];     // menu_based | service_area_business | appointment_based | ...
+  customer_actions: string[];   // call | visit | book | order | request_quote | ...
+  key_entities: string[];       // services | menu_items | rooms | pricing | ...
+  attributes: string[];         // local | licensed | emergency_service | ...
+  confidence: "high" | "medium" | "low";
+  matched_rules: string[];      // debug: why was this sector chosen?
+  website_pattern: WebsitePattern; // set after classification, never overridden
+}
+
 // ── Analysis pipeline input/output ───────────────────────────────────────────
 
 export interface AnalysisPipelineInput {
@@ -235,6 +362,8 @@ export interface AnalysisPipelineResult {
   scores: ScoreBreakdown;
   findings: Finding[];
   llmSummary: LlmReportSummary;
+  archetypeClassification?: ArchetypeClassification;
+  businessProfile?: BusinessProfile;
 }
 
 // ── Report (full, assembled for UI) ──────────────────────────────────────────
@@ -263,6 +392,8 @@ export interface Report {
     contentAssetType?: ContentAssetType;
     contentAssetDraft?: string;
     modelUsed?: string;
+    /** Grok enhancement overlay — undefined when Grok was skipped or failed */
+    grokEnhancement?: GrokEnhancement;
   };
   websiteSignals?: WebsiteSignalSummary;
   competitorSignals?: CompetitorSignalSummary[];
@@ -270,6 +401,8 @@ export interface Report {
   faqs?: FaqRow[];
   inferredCategory?: string;
   inferredCity?: string;
+  visibilitySimulation?: VisibilitySimulationResult;
+  llmCompetitorAnalysis?: LlmCompetitorAnalysisRow[];
 }
 
 export interface Recommendation {
@@ -310,6 +443,64 @@ export interface CompetitorSignalSummary {
   hasHours: boolean;
   hasPricing: boolean;
   hasTestimonials: boolean;
+}
+
+// ── LLM signal extraction ─────────────────────────────────────────────────────
+
+/** 10 boolean signals extracted by LLM from scraped content. Supplements scraper signals. */
+export interface LlmExtractedSignals {
+  has_pricing: boolean;
+  mentions_integrations: boolean;
+  mentions_booking: boolean;
+  mentions_physical_location: boolean;
+  mentions_menu: boolean;
+  mentions_appointments: boolean;
+  mentions_rooms_or_stays: boolean;
+  mentions_products_for_sale: boolean;
+  mentions_content_or_blog: boolean;
+  mentions_contact_info: boolean;
+}
+
+// ── LLM competitor discovery ──────────────────────────────────────────────────
+
+export interface LlmDiscoveredCompetitor {
+  name: string;
+  domain: string;
+}
+
+// ── LLM visibility simulation ─────────────────────────────────────────────────
+
+export interface VisibilityMention {
+  company: string;
+  count: number;
+  queries: string[];
+  /** Highest confidence seen across queries for this company */
+  topConfidence: "high" | "medium" | "low";
+}
+
+export interface VisibilitySimulationResult {
+  analyzedBusinessName: string;
+  insight: string;
+  analyzedBusinessMentions: number;
+  analyzedBusinessAppears: boolean;
+  topMentions: VisibilityMention[];
+  queriesSimulated: number;
+}
+
+export interface VisibilitySimulationRow {
+  query: string;
+  mentionedCompanies: Array<{ name: string; reason: string; confidence: "high" | "medium" | "low" }>;
+  analyzedBusinessAppears: boolean;
+}
+
+// ── LLM competitor analysis (per-query, for UI rendering) ─────────────────────
+// Populated from report_visibility_simulation rows in the API route.
+// Structured for direct rendering — each row is one simulated query.
+
+export interface LlmCompetitorAnalysisRow {
+  query: string;
+  competitors: Array<{ name: string; reason: string; confidence: "high" | "medium" | "low" }>;
+  targetBusinessLikelyToAppear: boolean;
 }
 
 // ── LLM provider abstraction ──────────────────────────────────────────────────

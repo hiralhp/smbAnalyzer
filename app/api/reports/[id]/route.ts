@@ -12,6 +12,9 @@ import type {
   ScoreExplanation,
   QueryCoverageRow,
   FaqRow,
+  GrokEnhancement,
+  VisibilitySimulationResult,
+  LlmCompetitorAnalysisRow,
 } from "@/lib/types";
 
 // Never cache — this route is polled for live status updates
@@ -147,7 +150,12 @@ export async function GET(
           : never,
         contentAssetDraft: llm.content_asset_draft ?? undefined,
         modelUsed: llm.model_used ?? undefined,
+        grokEnhancement: (llm.grok_enhancement as GrokEnhancement | null) ?? undefined,
       };
+
+      if (llm.visibility_summary) {
+        report.visibilitySimulation = llm.visibility_summary as VisibilitySimulationResult;
+      }
     }
 
     // Website signals (primary — non-competitor)
@@ -242,6 +250,29 @@ export async function GET(
           category: f.category,
           source: f.source as "deterministic" | "llm",
           sortOrder: f.sort_order ?? undefined,
+        })
+      );
+    }
+
+    // LLM competitor analysis (per-query visibility simulation rows)
+    const { data: visRows, error: visError } = await supabase
+      .from("report_visibility_simulation")
+      .select("query, mentioned_companies, analyzed_business_appears")
+      .eq("report_id", id)
+      .order("created_at");
+
+    console.log("[DIAG API] visRows:", visRows?.length ?? 0, "rows | error:", visError?.message ?? "none");
+
+    if (visRows?.length) {
+      report.llmCompetitorAnalysis = visRows.map(
+        (r): LlmCompetitorAnalysisRow => ({
+          query: r.query,
+          competitors: (r.mentioned_companies as Array<{
+            name: string;
+            reason: string;
+            confidence: "high" | "medium" | "low";
+          }>) ?? [],
+          targetBusinessLikelyToAppear: r.analyzed_business_appears ?? false,
         })
       );
     }

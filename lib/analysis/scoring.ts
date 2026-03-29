@@ -16,15 +16,14 @@ import type {
   FindingCategory,
   FindingConfidence,
   ReportFormInput,
-  CanonicalCategory,
+  BusinessProfile,
   BusinessFeatures,
 } from "@/lib/types";
 import {
   DEFAULT_WEIGHTS,
-  CATEGORY_WEIGHTS,
-  CATEGORY_REC_OVERRIDES,
-  type RecTemplate,
-} from "./category-templates";
+  SECTOR_WEIGHTS,
+  BUSINESS_MODEL_CONFIGS,
+} from "./business-profile-templates";
 
 // ── Score rule helpers ────────────────────────────────────────────────────────
 
@@ -162,7 +161,8 @@ function scoreServiceSpecificity(
   a: WebsiteAnalysis,
   formInput: ReportFormInput,
   sourceUrl?: string,
-  businessFeatures?: BusinessFeatures
+  businessFeatures?: BusinessFeatures,
+  profile?: BusinessProfile | null
 ): { score: number; findings: Finding[] } {
   const services = formInput.topServices ?? [];
   const servicesProvided = services.length > 0;
@@ -208,26 +208,38 @@ function scoreServiceSpecificity(
         gapEvidence: 'No pricing-related terms found ("price", "cost", "quote", "estimate", "$").',
       };
 
-  const rules: ScoredCondition[] = [
-    {
-      points: 15,
-      condition: a.hasServicePages,
-      category: "service",
-      confidence: "medium",
-      ruleId: "service_pages_present",
-      sourceSignal: "service_pages",
-      strengthLabel: "Dedicated service pages detected",
-      strengthDetail: "Individual service pages help AI recommend you for specific queries.",
-      strengthEvidence: "Service-oriented links detected (e.g. paths containing /services, /solutions, /work).",
-      gapLabel: "No dedicated service pages",
-      gapDetail: "Creating separate pages for each service dramatically improves AI discoverability.",
-      gapEvidence: "No links with service-oriented path segments (/services, /solutions, /work) found in page navigation.",
-    },
-    {
+  // Offering content rule — parameterized by business_model via BUSINESS_MODEL_CONFIGS
+  const modelConfig = profile ? BUSINESS_MODEL_CONFIGS[profile.business_model] : null;
+  const hasOffering = modelConfig ? modelConfig.checkOfferingContent(a) : a.hasServicePages;
+  const offeringLabel = modelConfig?.offeringContentLabel ?? "service pages";
+
+  const offeringRule: ScoredCondition = {
+    points: 15,
+    condition: hasOffering,
+    category: "service",
+    confidence: "medium",
+    ruleId: "offering_content_present",
+    sourceSignal: "offering_content",
+    strengthLabel: `Dedicated ${offeringLabel} detected`,
+    strengthDetail: `Individual ${offeringLabel} help AI recommend you for specific queries.`,
+    strengthEvidence: `${offeringLabel} content detected on page.`,
+    gapLabel: `No dedicated ${offeringLabel}`,
+    gapDetail: `Creating a dedicated ${offeringLabel} section dramatically improves AI discoverability.`,
+    gapEvidence: `No ${offeringLabel} found in page content.`,
+  };
+
+  // maxPossible shrinks when services are unknown — services_in_headings rule not emitted
+  const maxPossible = servicesProvided ? 30 : 20;
+
+  const rules: ScoredCondition[] = [offeringRule];
+
+  // Only emit services_in_headings when services were provided — avoids unevaluatable gap findings
+  if (servicesProvided) {
+    rules.push({
       points: 10,
       condition: servicesInHeadingsCondition,
       category: "service",
-      confidence: servicesProvided ? "high" : "medium",
+      confidence: "high",
       ruleId: "services_in_headings",
       sourceSignal: "services_in_headings",
       strengthLabel: "Services mentioned in headings",
@@ -237,14 +249,13 @@ function scoreServiceSpecificity(
         : "Service terms found in headings.",
       gapLabel: "Services not prominent in headings",
       gapDetail: "Mention your specific services in H2 headings so AI can surface them in responses.",
-      gapEvidence: servicesProvided
-        ? `None of the provided services (${services.slice(0, 3).join(", ")}) were found in any H2 heading.`
-        : "No top services provided — cannot check heading prominence.",
-    },
-    pricingRule,
-  ];
+      gapEvidence: `None of the provided services (${services.slice(0, 3).join(", ")}) were found in any H2 heading.`,
+    });
+  }
 
-  const { rawScore, findings } = applyRules(rules, 30, sourceUrl);
+  rules.push(pricingRule);
+
+  const { rawScore, findings } = applyRules(rules, maxPossible, sourceUrl);
   return { score: rawScore, findings };
 }
 
@@ -256,6 +267,11 @@ function scoreLocalRelevance(
   sourceUrl?: string
 ): { score: number; findings: Finding[] } {
   const cityLower = (formInput.city ?? "").toLowerCase();
+  // Normalize: strip state suffix so "brooklyn, ny" matches title containing just "brooklyn"
+  const cityForCheck = cityLower.includes(",")
+    ? cityLower.split(",")[0].trim()
+    : cityLower;
+
   const prominentText = [
     a.title,
     ...(a.h1Headings ?? []),
@@ -265,30 +281,54 @@ function scoreLocalRelevance(
     .toLowerCase();
 
   const cityInTitle =
-    cityLower.length > 0 && (a.title ?? "").toLowerCase().includes(cityLower);
+    cityForCheck.length > 0 && (a.title ?? "").toLowerCase().includes(cityForCheck);
   const cityInHeadings =
-    cityLower.length > 0 && prominentText.includes(cityLower);
+    cityForCheck.length > 0 && prominentText.includes(cityForCheck);
+  const cityInMeta =
+    cityForCheck.length > 0 && (a.metaDescription ?? "").toLowerCase().includes(cityForCheck);
+
+  // Structured address (JSON-LD, microdata, or meta city tag) is authoritative —
+  // if any structured address source populated a city, location IS clearly stated.
+  // This prevents false "location not clearly stated" when the address is in the
+  // footer or microdata but not in the title/H1.
+  const hasStructuredAddress = !!(a.schemaOrgAddress?.city || a.metaCity);
+
+  // "Location clearly stated" if structured data, scraper flag, OR city in key position.
+  const locationClearlyStated =
+    hasStructuredAddress ||
+    a.hasLocationMention ||
+    cityInTitle ||
+    cityInHeadings ||
+    cityInMeta;
+
+  // maxPossible shrinks when city is unknown — city rules are not emitted
+  const cityRulesMax = 15; // city_in_title (8) + city_in_headings (7)
+  const maxPossible = cityForCheck.length > 0 ? 25 : 25 - cityRulesMax;
 
   const rules: ScoredCondition[] = [
     {
       points: 10,
-      condition: a.hasLocationMention,
+      condition: locationClearlyStated,
       category: "local",
       confidence: "medium",
       ruleId: "location_mention",
       sourceSignal: "location_mention",
       strengthLabel: "Location clearly mentioned",
       strengthDetail: "City or location reference detected in prominent page positions.",
-      strengthEvidence: "Location language detected in title or H1 (e.g. city+state pattern, or terms like 'serving', 'located in').",
+      strengthEvidence: "Location language detected in title, meta, or H1 (e.g. city+state pattern, or 'serving', 'located in').",
       gapLabel: "Location not clearly stated",
       gapDetail: "AI assistants use location signals to match businesses to \"near me\" and city-specific queries.",
-      gapEvidence: "No city/state pattern or location language ('serving', 'located in', 'based in') detected in title or H1.",
+      gapEvidence: "No city/state pattern or location language detected in title, meta description, or H1.",
     },
-    {
+  ];
+
+  // Only emit city-specific rules when city is known — avoids unevaluatable gap findings
+  if (cityForCheck.length > 0) {
+    rules.push({
       points: 8,
       condition: cityInTitle,
       category: "local",
-      confidence: cityLower.length > 0 ? "high" : "low",
+      confidence: "high",
       ruleId: "city_in_title",
       sourceSignal: "city_in_title",
       strengthLabel: "City name in title tag",
@@ -296,15 +336,13 @@ function scoreLocalRelevance(
       strengthEvidence: `"${formInput.city}" found in page <title> tag.`,
       gapLabel: "City not in title tag",
       gapDetail: `Adding "${formInput.city}" to your title tag is one of the easiest local relevance wins.`,
-      gapEvidence: cityLower.length > 0
-        ? `"${formInput.city}" not found in the page <title> tag.`
-        : "No city provided — cannot check city presence in title.",
-    },
-    {
+      gapEvidence: `"${formInput.city}" not found in the page <title> tag.`,
+    });
+    rules.push({
       points: 7,
       condition: cityInHeadings,
       category: "local",
-      confidence: cityLower.length > 0 ? "high" : "low",
+      confidence: "high",
       ruleId: "city_in_headings",
       sourceSignal: "city_in_headings",
       strengthLabel: "Location mentioned in headings",
@@ -312,13 +350,11 @@ function scoreLocalRelevance(
       strengthEvidence: `"${formInput.city}" found in H1 or H2 headings.`,
       gapLabel: "City not in page headings",
       gapDetail: "Include your city/region in at least one H1 or H2 to strengthen local AI relevance.",
-      gapEvidence: cityLower.length > 0
-        ? `"${formInput.city}" not found in any H1 or H2 heading.`
-        : "No city provided — cannot check heading locality.",
-    },
-  ];
+      gapEvidence: `"${formInput.city}" not found in any H1 or H2 heading.`,
+    });
+  }
 
-  const { rawScore, findings } = applyRules(rules, 25, sourceUrl);
+  const { rawScore, findings } = applyRules(rules, maxPossible, sourceUrl);
   return { score: rawScore, findings };
 }
 
@@ -327,14 +363,28 @@ function scoreLocalRelevance(
 function scoreTrustSignals(
   a: WebsiteAnalysis,
   sourceUrl?: string,
-  businessFeatures?: BusinessFeatures
+  businessFeatures?: BusinessFeatures,
+  profile?: BusinessProfile | null
 ): { score: number; findings: Finding[] } {
   // Credential rule is elevated to high confidence for regulated/credentialed businesses
   const isRegulated = businessFeatures?.requiresCredentials ?? false;
+  const isHospitality = profile?.sector === "hospitality" || profile?.business_model === "accommodation";
+
   const credentialConfidence: FindingConfidence = isRegulated ? "high" : "medium";
-  const credentialGapDetail = isRegulated
+
+  // Hotels use brand affiliation / ratings / policy clarity instead of license/insured language.
+  // Do not penalize hotels for missing professional-service trust markers.
+  const credentialGapDetail = isHospitality
+    ? "Adding brand affiliation, guest ratings, or a best-rate guarantee helps AI trust your property listing."
+    : isRegulated
     ? "License and insurance credentials are expected in your industry — AI systems treat their absence as a significant trust gap."
     : 'Mentioning licensing, certifications, or guarantees ("licensed & insured") significantly boosts AI trust scoring.';
+  const credentialStrengthLabel = isHospitality
+    ? "Brand / trust indicators present"
+    : "Professional trust indicators";
+  const credentialGapLabel = isHospitality
+    ? "No brand or trust indicators detected"
+    : "No professional trust indicators";
 
   const rules: ScoredCondition[] = [
     {
@@ -372,12 +422,18 @@ function scoreTrustSignals(
       confidence: credentialConfidence,
       ruleId: "trust_keywords_present",
       sourceSignal: "trust_keywords",
-      strengthLabel: "Professional trust indicators",
-      strengthDetail: "Words like licensed, certified, insured, or guaranteed were detected.",
-      strengthEvidence: 'Professional credential language found (e.g. "licensed", "certified", "insured", "accredited").',
-      gapLabel: "No professional trust indicators",
+      strengthLabel: credentialStrengthLabel,
+      strengthDetail: isHospitality
+        ? "Trust indicators (ratings, awards, guarantees) detected on the page."
+        : "Words like licensed, certified, insured, or guaranteed were detected.",
+      strengthEvidence: isHospitality
+        ? 'Brand/trust language found (e.g. "award", "guarantee", "certified", "accredited").'
+        : 'Professional credential language found (e.g. "licensed", "certified", "insured", "accredited").',
+      gapLabel: credentialGapLabel,
       gapDetail: credentialGapDetail,
-      gapEvidence: 'No credential language found ("licensed", "certified", "insured", "accredited", "guaranteed", "BBB").',
+      gapEvidence: isHospitality
+        ? 'No trust indicators found (brand award mentions, best-rate guarantee, or certification language).'
+        : 'No credential language found ("licensed", "certified", "insured", "accredited", "guaranteed", "BBB").',
     },
     {
       points: 4,
@@ -542,12 +598,12 @@ export function generateScoreExplanation(
 /**
  * Run all scoring rules against a WebsiteAnalysis and return scores + findings.
  * Deterministic — no LLM calls.
- * Accepts optional canonicalCategory to apply category-specific score weights.
+ * Accepts optional BusinessProfile to apply sector-specific score weights.
  */
 export function scoreWebsite(
   analysis: WebsiteAnalysis,
   formInput: ReportFormInput,
-  canonicalCategory: CanonicalCategory = "generic",
+  profile: BusinessProfile | null = null,
   businessFeatures?: BusinessFeatures
 ): { scores: ScoreBreakdown; findings: Finding[] } {
   const sourceUrl = analysis.url || undefined;
@@ -577,8 +633,15 @@ export function scoreWebsite(
     };
   }
 
-  // For no-URL reports, return all gaps but still run scoring
+  // For no-URL reports, give partial local relevance credit when city is known
   if (analysis.fetchError === "no_url_provided") {
+    const cityKnown = (formInput.city ?? "").trim().length > 0;
+    const localRelevanceScore = cityKnown ? 20 : 0;
+    const weights = SECTOR_WEIGHTS[profile?.sector ?? ""] ?? DEFAULT_WEIGHTS;
+    const overallScore = cityKnown
+      ? Math.round(localRelevanceScore * weights.localRelevance)
+      : 0;
+
     const noUrlFindings: Finding[] = [
       {
         type: "gap",
@@ -591,12 +654,24 @@ export function scoreWebsite(
         ruleId: "website_present",
       },
     ];
+    if (cityKnown) {
+      noUrlFindings.push({
+        type: "strength",
+        category: "local",
+        label: "Location known",
+        detail: `Business location is confirmed in ${formInput.city}.`,
+        confidence: "high",
+        evidence: `City provided: "${formInput.city}"`,
+        sourceSignal: "city_known",
+        ruleId: "city_known",
+      });
+    }
     return {
       scores: {
-        overallScore: 0,
+        overallScore,
         contentClarityScore: 0,
         serviceSpecificityScore: 0,
-        localRelevanceScore: 0,
+        localRelevanceScore,
         trustSignalScore: 0,
         faqDiscoverabilityScore: 0,
       },
@@ -605,13 +680,13 @@ export function scoreWebsite(
   }
 
   const clarity = scoreContentClarity(analysis, sourceUrl);
-  const service = scoreServiceSpecificity(analysis, formInput, sourceUrl, businessFeatures);
+  const service = scoreServiceSpecificity(analysis, formInput, sourceUrl, businessFeatures, profile);
   const local = scoreLocalRelevance(analysis, formInput, sourceUrl);
-  const trust = scoreTrustSignals(analysis, sourceUrl, businessFeatures);
+  const trust = scoreTrustSignals(analysis, sourceUrl, businessFeatures, profile);
   const faq = scoreFaqDiscoverability(analysis, sourceUrl);
 
-  // Apply category-specific weights (falls back to defaults for generic)
-  const weights = CATEGORY_WEIGHTS[canonicalCategory] ?? DEFAULT_WEIGHTS;
+  // Apply sector-specific weights (falls back to DEFAULT_WEIGHTS when sector is null)
+  const weights = SECTOR_WEIGHTS[profile?.sector ?? ""] ?? DEFAULT_WEIGHTS;
 
   const overallScore = Math.round(
     clarity.score * weights.contentClarity +
@@ -642,15 +717,202 @@ export function scoreWebsite(
   };
 }
 
+// ── Recommendation rule engine ────────────────────────────────────────────────
+
+interface RecRule {
+  id: string;
+  trigger: (
+    profile: BusinessProfile | null,
+    analysis: WebsiteAnalysis,
+    features: BusinessFeatures | undefined,
+    gaps: Finding[]
+  ) => boolean;
+  title: string;
+  description: string;
+  /** When present, overrides title/description with model-specific text */
+  resolve?: (
+    profile: BusinessProfile | null,
+    analysis: WebsiteAnalysis,
+    features: BusinessFeatures | undefined
+  ) => { title: string; description: string };
+  impact: "high" | "medium" | "low";
+  effort: "high" | "medium" | "low";
+}
+
+function hasGap(gaps: Finding[], ruleId: string): boolean {
+  return gaps.some((g) => g.ruleId === ruleId);
+}
+function hasModel(profile: BusinessProfile | null, model: string): boolean {
+  return profile?.offering_model.includes(model) ?? false;
+}
+function hasAttr(profile: BusinessProfile | null, attr: string): boolean {
+  return profile?.attributes.includes(attr) ?? false;
+}
+
+const REC_RULES: RecRule[] = [
+  {
+    id: "menu_based_no_pricing",
+    trigger: (p, _a, _f, gaps) =>
+      hasModel(p, "menu_based") &&
+      p?.business_model !== "accommodation" && // hotels use bookable_rooms_no_pricing instead
+      hasGap(gaps, "pricing_language"),
+    title: "Add prices to your menu",
+    description:
+      "Displaying prices builds trust and helps AI match your business to budget-specific searches. Even approximate ranges work.",
+    impact: "high",
+    effort: "low",
+  },
+  {
+    id: "menu_based_no_hours",
+    trigger: (p, _a, _f, gaps) =>
+      hasModel(p, "menu_based") &&
+      p?.business_model !== "accommodation" && // hotels use physical_location_no_hours instead
+      hasGap(gaps, "hours_present"),
+    title: "Display your hours prominently",
+    description:
+      "Hours are critical — customers ask AI assistants 'is [business] open now?' constantly. Put your hours in the header or hero section.",
+    impact: "high",
+    effort: "low",
+  },
+  {
+    id: "menu_based_no_faq",
+    trigger: (p, _a, _f, gaps) =>
+      hasModel(p, "menu_based") &&
+      p?.business_model !== "accommodation" && // hotel FAQ content is different from dining FAQ
+      hasGap(gaps, "faq_present"),
+    title: "Add a menu/ordering FAQ",
+    description:
+      "Common questions like 'Do you take reservations?', 'Is there parking?', 'Do you offer takeout?' are frequently asked to AI assistants. A FAQ page lets AI answer these for you.",
+    impact: "medium",
+    effort: "low",
+  },
+  {
+    id: "no_offering_content",
+    trigger: (_p, _a, _f, gaps) => hasGap(gaps, "offering_content_present"),
+    title: "Create dedicated offering pages",
+    description:
+      "Add pages that detail your services, menu, or products to improve AI discoverability.",
+    resolve: (p, _a, _f) => {
+      const config = p ? BUSINESS_MODEL_CONFIGS[p.business_model] : null;
+      return config?.offeringContentRec ?? {
+        title: "Create dedicated offering pages",
+        description:
+          "Add pages that detail your services, menu, or products to improve AI discoverability.",
+      };
+    },
+    impact: "high",
+    effort: "medium",
+  },
+  {
+    id: "service_area_no_location",
+    trigger: (p, _a, _f, gaps) =>
+      hasModel(p, "service_area_business") && hasGap(gaps, "location_mention"),
+    title: "Add a service area page",
+    description:
+      "Home service customers search by location. Create a 'Service Area' page listing every city and neighborhood you cover. This is a primary AI signal for matching 'near me' searches.",
+    impact: "high",
+    effort: "low",
+  },
+  {
+    id: "service_area_no_quote",
+    trigger: (p, _a, f, gaps) =>
+      hasModel(p, "service_area_business") &&
+      !(f?.hasQuoteIntent) &&
+      hasGap(gaps, "pricing_language"),
+    title: "Add a free estimate call-to-action",
+    description:
+      "Add a prominent 'Free Estimate' or 'Get a Quote' button to your homepage and service pages. Customers searching for estimates expect to see this CTA — AI assistants use its presence to recommend you for those queries.",
+    impact: "high",
+    effort: "low",
+  },
+  {
+    id: "consultation_based_no_trust",
+    trigger: (p, _a, _f, gaps) =>
+      hasModel(p, "consultation_based") && hasGap(gaps, "trust_keywords_present"),
+    title: "Display your credentials",
+    description:
+      "List your licenses, certifications, years of experience, and any awards. AI systems use credential language to recommend professional service providers.",
+    impact: "high",
+    effort: "low",
+  },
+  {
+    id: "bookable_rooms_no_pricing",
+    trigger: (p, _a, _f, gaps) =>
+      hasModel(p, "bookable_rooms") && hasGap(gaps, "pricing_language"),
+    title: "Add room rates and pricing",
+    description:
+      "Guests want to see rates before booking. Adding room rates to your website helps AI answer pricing questions and improves conversion.",
+    impact: "high",
+    effort: "low",
+  },
+  {
+    id: "physical_location_no_hours",
+    trigger: (p, _a, _f, gaps) =>
+      hasModel(p, "physical_location") && hasGap(gaps, "hours_present"),
+    title: "Add your business hours",
+    description:
+      "Display your operating hours clearly on your homepage and Contact page. This helps AI answer 'are they open now?' queries about your business.",
+    impact: "medium",
+    effort: "low",
+  },
+  {
+    id: "physical_location_no_contact",
+    trigger: (p, _a, _f, gaps) =>
+      hasModel(p, "physical_location") && hasGap(gaps, "contact_info_present"),
+    title: "Make address and contact prominent",
+    description:
+      "Ensure your phone number and email appear in the header, footer, and Contact page. Click-to-call phone numbers also improve mobile conversion.",
+    impact: "medium",
+    effort: "low",
+  },
+  {
+    id: "any_no_faq",
+    trigger: (_p, _a, _f, gaps) => hasGap(gaps, "faq_present"),
+    title: "Add a FAQ section",
+    description:
+      "A FAQ section is the highest-impact change for AI discoverability. AI assistants frequently pull FAQ content directly to answer user questions. Write 6–10 questions your customers actually ask.",
+    impact: "high",
+    effort: "low",
+  },
+  {
+    id: "any_no_testimonials",
+    trigger: (_p, _a, _f, gaps) => hasGap(gaps, "testimonials_present"),
+    title: "Embed customer reviews",
+    description:
+      "Add 3–5 real customer testimonials directly on your homepage and service pages. AI systems use on-site review content to confirm business quality.",
+    impact: "medium",
+    effort: "low",
+  },
+  {
+    id: "any_no_city_in_title",
+    trigger: (_p, _a, _f, gaps) => hasGap(gaps, "city_in_title"),
+    title: "Add your city to the page title",
+    description:
+      "Update your title tag to include your city name (e.g., \"Best Plumber in Denver | Smith Plumbing\"). This is a 5-minute change with significant AI visibility impact.",
+    impact: "high",
+    effort: "low",
+  },
+  {
+    id: "licensed_no_trust",
+    trigger: (p, _a, _f, gaps) =>
+      hasAttr(p, "licensed") && hasGap(gaps, "trust_keywords_present"),
+    title: "Display your license and credentials",
+    description:
+      "Display your license number, insurance status, and any certifications prominently — ideally in your header or footer. Customers expect to see credentials before calling, and AI systems weight their presence heavily.",
+    impact: "high",
+    effort: "low",
+  },
+];
+
 /**
  * Generate prioritized recommendations from gap findings.
- * Uses category-specific templates when available, falls back to generic.
- * Returns up to 5 recommendations sorted by impact.
+ * Uses a profile-aware rule engine — rules fire based on offering_model,
+ * attributes, and which gap ruleIds are present. Returns top 5.
  */
 export function generateRecommendations(
   findings: Finding[],
-  _analysis: WebsiteAnalysis,
-  canonicalCategory: CanonicalCategory = "generic",
+  analysis: WebsiteAnalysis,
+  profile: BusinessProfile | null = null,
   businessFeatures?: BusinessFeatures
 ): Array<{
   priority: number;
@@ -659,110 +921,16 @@ export function generateRecommendations(
   impact: "high" | "medium" | "low";
   effort: "high" | "medium" | "low";
 }> {
-  const primaryConversion = businessFeatures?.primaryConversion;
-  const isQuoteBusiness = businessFeatures?.hasQuoteIntent ?? false;
-  const isBookingBusiness = businessFeatures?.hasBookingOrReservations ?? false;
-  const isRegulated = businessFeatures?.requiresCredentials ?? false;
+  const gaps = findings.filter((f) => f.type === "gap");
 
-  // FAQ description — specialized for booking businesses
-  const faqDescription = isBookingBusiness
-    ? "A FAQ section is the highest-impact change for AI discoverability. Include questions like 'How do I book an appointment?', 'What should I bring?', and 'Do you take walk-ins?' — these are exactly the queries AI assistants answer."
-    : "A FAQ section is the highest-impact change for AI discoverability. AI assistants frequently pull FAQ content directly to answer user questions. Write 6–10 questions your customers actually ask.";
-
-  // Credential rec — more urgent for regulated businesses
-  const credentialDescription = isRegulated
-    ? "Display your license number, insurance status, and any certifications prominently — ideally in your header or footer. In your industry, customers expect to see credentials before calling, and AI systems weight their presence heavily."
-    : 'Prominently display your license number, insurance status, certifications, or guarantees. Phrases like "Licensed, bonded & insured" directly boost AI trust signals.';
-
-  // Pricing rec — specialized for quote businesses
-  const pricingTitle = isQuoteBusiness
-    ? "Add a free estimate call-to-action"
-    : "Add pricing context to your site";
-  const pricingDescription = isQuoteBusiness
-    ? "Add a prominent 'Free Estimate' or 'Get a Quote' button to your homepage and service pages. Customers searching for estimates expect to see this CTA — AI assistants use its presence to recommend you for those queries."
-    : 'Include pricing ranges, starting prices, or at least an "affordable" or "competitive rates" statement. Pricing context helps AI match your business to budget-specific searches.';
-
-  const gapRecs: Record<
-    string,
-    {
-      title: string;
-      description: string;
-      impact: "high" | "medium" | "low";
-      effort: "high" | "medium" | "low";
-    }
-  > = {
-    "No FAQ section detected": {
-      title: "Add a FAQ page or section",
-      description: faqDescription,
-      impact: "high",
-      effort: "low",
-    },
-    "No dedicated service pages": {
-      title: "Create individual service pages",
-      description:
-        "Build a separate page for each core service you offer. Each page should cover: what the service is, who needs it, what the process looks like, pricing range, and local context.",
-      impact: "high",
-      effort: "medium",
-    },
-    "No embedded reviews or testimonials": {
-      title: "Embed customer reviews on your site",
-      description:
-        "Add 3–5 real customer testimonials directly on your homepage and service pages. AI systems use on-site review content to confirm business quality.",
-      impact: "medium",
-      effort: "low",
-    },
-    "No professional trust indicators": {
-      title: "Add trust credentials to your site",
-      description: credentialDescription,
-      impact: isRegulated ? "high" : "medium",
-      effort: "low",
-    },
-    "Location not clearly stated": {
-      title: "Strengthen your local presence signals",
-      description:
-        "Add your city and region to your title tag, H1, and throughout body content. Consider adding a service area map or list of neighborhoods you serve.",
-      impact: "high",
-      effort: "low",
-    },
-    "City not in title tag": {
-      title: "Add your city to the page title",
-      description:
-        "Update your title tag to include your city name (e.g., \"Best Plumber in Denver | Smith Plumbing\"). This is a 5-minute change with significant AI visibility impact.",
-      impact: "high",
-      effort: "low",
-    },
-    "No contact information detected": {
-      title: "Make contact information prominent",
-      description:
-        "Ensure your phone number and email appear in the header, footer, and Contact page. Click-to-call phone numbers also improve mobile conversion.",
-      impact: "medium",
-      effort: "low",
-    },
-    "No business hours detected": {
-      title: "Add your business hours",
-      description:
-        "Display your operating hours clearly on your homepage and Contact page. This helps AI answer \"are they open now?\" queries about your business.",
-      impact: "low",
-      effort: "low",
-    },
-    "No pricing language detected": {
-      title: pricingTitle,
-      description: pricingDescription,
-      impact: "medium",
-      effort: "low",
-    },
-    "No free estimate or quote CTA": {
-      title: pricingTitle,
-      description: pricingDescription,
-      impact: "high",
-      effort: "low",
-    },
+  const impactOrder: Record<"high" | "medium" | "low", number> = {
+    high: 0,
+    medium: 1,
+    low: 2,
   };
 
-  // Merge category-specific overrides — they key on ruleId, then map to gap label
-  const categoryOverrides = CATEGORY_REC_OVERRIDES[canonicalCategory] ?? {};
-
-  const gaps = findings.filter((f) => f.type === "gap");
+  const seenIds = new Set<string>();
+  const seenTitles = new Set<string>(); // deduplicate by normalized title
   const recs: Array<{
     priority: number;
     title: string;
@@ -771,18 +939,24 @@ export function generateRecommendations(
     effort: "high" | "medium" | "low";
   }> = [];
 
-  const impactOrder: Record<"high" | "medium" | "low", number> = {
-    high: 0,
-    medium: 1,
-    low: 2,
-  };
-
-  for (const gap of gaps) {
-    // Category override by ruleId takes priority over generic label lookup
-    const categoryRec: RecTemplate | undefined =
-      gap.ruleId ? categoryOverrides[gap.ruleId] : undefined;
-    const rec = categoryRec ?? gapRecs[gap.label];
-    if (rec) recs.push({ ...rec, priority: 0 });
+  for (const rule of REC_RULES) {
+    if (seenIds.has(rule.id)) continue;
+    if (rule.trigger(profile, analysis, businessFeatures, gaps)) {
+      seenIds.add(rule.id);
+      const { title, description } = rule.resolve
+        ? rule.resolve(profile, analysis, businessFeatures)
+        : { title: rule.title, description: rule.description };
+      const normalizedTitle = title.toLowerCase().trim();
+      if (seenTitles.has(normalizedTitle)) continue; // skip exact-title duplicates
+      seenTitles.add(normalizedTitle);
+      recs.push({
+        priority: 0,
+        title,
+        description,
+        impact: rule.impact,
+        effort: rule.effort,
+      });
+    }
   }
 
   recs.sort((a, b) => {

@@ -11,17 +11,19 @@ import type {
   Finding,
   LlmReportSummary,
   ReportFormInput,
+  BusinessProfile,
 } from "@/lib/types";
 import { getLlmProvider } from "@/lib/llm";
-import {
-  buildReportSummaryPrompt,
-} from "@/lib/prompts/report-summary";
+import { buildReportSummaryPrompt } from "@/lib/prompts/report-summary";
+import { buildFaqDraft } from "@/lib/analysis/faq-generator";
 
 export async function generateLlmSummary(
   formInput: ReportFormInput,
   websiteAnalysis: WebsiteAnalysis,
   scores: ScoreBreakdown,
-  findings: Finding[]
+  findings: Finding[],
+  businessProfile?: BusinessProfile | null,
+  faqQuestions?: string[]
 ): Promise<LlmReportSummary> {
   const strengths = findings.filter((f) => f.type === "strength");
   const gaps = findings.filter((f) => f.type === "gap");
@@ -32,6 +34,9 @@ export async function generateLlmSummary(
     scores,
     strengths,
     gaps,
+    sector: businessProfile?.sector,
+    subtype: businessProfile?.subtype,
+    faqQuestions,
   });
 
   const provider = getLlmProvider();
@@ -50,7 +55,7 @@ export async function generateLlmSummary(
   } catch (err) {
     console.error("[LLM Summarizer] Failed:", err);
     // Return a graceful fallback so the report still renders
-    return buildFallbackSummary(formInput, strengths, gaps);
+    return buildFallbackSummary(formInput, strengths, gaps, faqQuestions);
   }
 
   // Parse JSON response
@@ -66,28 +71,38 @@ export async function generateLlmSummary(
   } catch (parseErr) {
     console.error("[LLM Summarizer] JSON parse failed:", parseErr);
     console.error("[LLM Summarizer] Raw response:", rawResponse);
-    return buildFallbackSummary(formInput, strengths, gaps);
+    return buildFallbackSummary(formInput, strengths, gaps, faqQuestions);
   }
 }
 
 /**
  * Rule-based fallback summary when LLM is unavailable or fails.
- * Ensures the report still renders with useful content.
+ * Uses category-specific FAQ questions (from generateFaqs) for the draft so the
+ * content is never generic even without an LLM call.
  */
 function buildFallbackSummary(
   formInput: ReportFormInput,
   strengths: Finding[],
-  gaps: Finding[]
+  gaps: Finding[],
+  faqQuestions?: string[]
 ): LlmReportSummary {
   const businessName = formInput.businessName;
   const city = formInput.city ? ` in ${formInput.city}` : "";
   const category = formInput.category ? ` (${formInput.category})` : "";
 
+  const hasFaqGap = gaps.some((g) => g.category === "faq");
+  const contentAssetType: LlmReportSummary["contentAssetType"] = hasFaqGap ? "faq" : "none";
+  // Use category-specific questions if available; otherwise leave draft empty
+  const contentAssetDraft =
+    hasFaqGap && faqQuestions && faqQuestions.length > 0
+      ? buildFaqDraft(faqQuestions, businessName)
+      : "";
+
   return {
     positioningSummary: `${businessName}${category} has a web presence${city} with some established signals, but there are clear opportunities to improve how AI systems discover and understand the business. Addressing the identified gaps will meaningfully increase visibility in AI-powered search results.`,
     topStrengths: strengths.slice(0, 3).map((s) => s.label),
     topOpportunities: gaps.slice(0, 3).map((g) => g.detail ?? g.label),
-    contentAssetType: gaps.some((g) => g.category === "faq") ? "faq" : "none",
-    contentAssetDraft: "",
+    contentAssetType,
+    contentAssetDraft,
   };
 }

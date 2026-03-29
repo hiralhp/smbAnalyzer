@@ -16,6 +16,22 @@ const BODY_TEXT_MAX_CHARS = 2_000;
 
 // Keywords used in heuristic signal detection
 const FAQ_KEYWORDS = ["faq", "frequently asked", "common questions", "q&a", "questions & answers"];
+const INTEGRATION_KEYWORDS = [
+  "integration", "integrates with", "connects with", "works with",
+  "native integration", "third-party", "zapier", "slack", "salesforce",
+];
+const APPOINTMENT_KEYWORDS = [
+  "book an appointment", "schedule a", "book a consultation",
+  "book now", "schedule now", "schedule your", "request an appointment",
+];
+const ROOMS_KEYWORDS = [
+  "room", "suite", "check-in", "check-out", "nightly",
+  "per night", "guest room", "king room", "queen room", "standard room",
+];
+const BLOG_CONTENT_KEYWORDS = [
+  "blog", "newsletter", "podcast", "subscribe to our",
+  "episode", "our latest articles", "read more", "magazine",
+];
 const TRUST_KEYWORDS = ["certified", "licensed", "insured", "award", "accredited", "guarantee", "warranty", "bbb", "years of experience", "family owned"];
 const PRICING_KEYWORDS = ["price", "pricing", "cost", "rate", "fee", "quote", "estimate", "starting at", "$", "free"];
 const TESTIMONIAL_KEYWORDS = ["testimonial", "review", "what our customers", "what clients say", "5 star", "★", "⭐"];
@@ -113,6 +129,58 @@ export async function scrapeWebsite(
   const $ = cheerio.load(html);
   const origin = getOrigin(normalizedUrl);
 
+  // Extract og:site_name and schema.org name BEFORE removing script elements
+  const ogSiteName = $('meta[property="og:site_name"]').attr("content")?.trim() || undefined;
+
+  // ── Structured data extraction (JSON-LD + microdata) ────────────────────────
+  let schemaOrgName: string | undefined;
+  let schemaOrgAddress: { street?: string; city?: string; state?: string; zip?: string } | undefined;
+
+  // 1. JSON-LD (application/ld+json)
+  $('script[type="application/ld+json"]').each((_, el) => {
+    try {
+      const data = JSON.parse($(el).html() ?? "");
+      const items = Array.isArray(data["@graph"]) ? data["@graph"] : [data];
+      for (const item of items) {
+        if (!schemaOrgName && typeof item.name === "string" && item.name.trim()) {
+          schemaOrgName = item.name.trim();
+        }
+        if (!schemaOrgAddress && item.address && typeof item.address === "object") {
+          const addr = item.address as Record<string, unknown>;
+          const city = typeof addr.addressLocality === "string" ? addr.addressLocality.trim() : undefined;
+          const state = typeof addr.addressRegion === "string" ? addr.addressRegion.trim() : undefined;
+          const street = typeof addr.streetAddress === "string" ? addr.streetAddress.trim() : undefined;
+          const zip = typeof addr.postalCode === "string" ? addr.postalCode.trim() : undefined;
+          if (city || street) {
+            schemaOrgAddress = { street, city, state, zip };
+          }
+        }
+        if (schemaOrgName && schemaOrgAddress) break;
+      }
+    } catch { /* ignore malformed JSON-LD */ }
+  });
+
+  // 2. Microdata (itemprop) — fallback when JSON-LD is absent/incomplete
+  if (!schemaOrgName) {
+    const microdataName =
+      $('[itemprop="name"]').first().text().trim() ||
+      $('[itemprop="legalName"]').first().text().trim();
+    if (microdataName && microdataName.length > 1) schemaOrgName = microdataName;
+  }
+  if (!schemaOrgAddress) {
+    const microStreet   = $('[itemprop="streetAddress"]').first().text().trim() || undefined;
+    const microCity     = $('[itemprop="addressLocality"]').first().text().trim() || undefined;
+    const microState    = $('[itemprop="addressRegion"]').first().text().trim() || undefined;
+    const microZip      = $('[itemprop="postalCode"]').first().text().trim() || undefined;
+    if (microCity || microStreet) {
+      schemaOrgAddress = { street: microStreet, city: microCity, state: microState, zip: microZip };
+    }
+  }
+
+  // 3. <meta name="city"> / <meta name="state"> — common on hotel and local-business sites
+  const metaCity = $('meta[name="city"]').attr("content")?.trim() || undefined;
+  const metaState = $('meta[name="state"]').attr("content")?.trim() || undefined;
+
   // Remove noisy elements before text extraction
   $("script, style, noscript, nav, footer, [aria-hidden='true']").remove();
 
@@ -160,6 +228,14 @@ export async function scrapeWebsite(
     bodyTextSample
   ).toLowerCase();
 
+  // Pattern-routing signals — searched in raw HTML text before script removal
+  // (cheaper than re-parsing; keyword matches are sufficient for routing)
+  const rawHtmlLower = html.toLowerCase();
+  const mentionsIntegrations = containsAny(rawHtmlLower, INTEGRATION_KEYWORDS);
+  const mentionsAppointments = containsAny(rawHtmlLower, APPOINTMENT_KEYWORDS);
+  const mentionsRoomsOrStays = containsAny(rawHtmlLower, ROOMS_KEYWORDS);
+  const mentionsContentOrBlog = containsAny(rawHtmlLower, BLOG_CONTENT_KEYWORDS);
+
   // Service pages: internal links with service-y path segments
   const serviceLinkPatterns = ["service", "solution", "offering", "work", "what-we-do", "products"];
   const hasServicePages =
@@ -177,12 +253,27 @@ export async function scrapeWebsite(
   const hasHours = containsAny(fullText, HOURS_KEYWORDS);
   const hasContactInfo = matchesAny(bodyText, CONTACT_PATTERNS);
 
-  // Location: check if city/location words appear in prominent positions
-  // We'll use a simple heuristic — check title + H1 for location language
-  const prominentText = [title, ...(h1Headings ?? [])].join(" ").toLowerCase();
+  // Location: check title, meta, H1, and structured data for location signals.
+  const prominentForLocation = [title ?? "", metaDescription ?? "", ...h1Headings].join(" ");
+  const prominentLocationLower = prominentForLocation.toLowerCase();
+  // Also check first 500 chars of body (after script removal) for address patterns
+  const bodySliceForLocation = bodyText.slice(0, 500);
+
   const hasLocationMention =
-    /\b[a-z]{3,},\s*[a-z]{2}\b/.test(prominentText) || // "city, ST" pattern
-    containsAny(prominentText, ["serving", "located in", "based in", "near"]);
+    // Structured address from JSON-LD / microdata / meta tags — authoritative
+    !!(schemaOrgAddress?.city) ||
+    !!(metaCity) ||
+    // "Brooklyn, NY" — standard City, ST format
+    /\b[a-z]{3,},\s*[a-z]{2}\b/.test(prominentLocationLower) ||
+    // "Smyrna TN" — City + 2-letter state abbreviation with space (no comma)
+    /\b[A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]+)?\s+[A-Z]{2}\b/.test(prominentForLocation) ||
+    // "South Williamsburg, Brooklyn" — multi-word neighborhood + city
+    /\b[A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)?,\s*[A-Z][a-zA-Z]{3,}\b/.test(prominentForLocation) ||
+    // Street addresses — "178 Kent Ave", "1 Main Street"
+    /\b\d+\s+[A-Za-z][a-zA-Z\s]+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Drive|Dr|Lane|Ln|Way|Place|Pl)\b/i.test(prominentForLocation) ||
+    // Street address in body intro (footer often not in 2000-char sample)
+    /\b\d+\s+[A-Za-z][a-zA-Z\s]+(?:Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Drive|Dr|Lane|Ln|Way|Place|Pl)\b/i.test(bodySliceForLocation) ||
+    containsAny(prominentLocationLower, ["serving", "located in", "based in", "near "]);
 
   return {
     url: normalizedUrl,
@@ -190,6 +281,11 @@ export async function scrapeWebsite(
     competitorName: options.competitorName,
     title,
     metaDescription,
+    ogSiteName,
+    schemaOrgName,
+    schemaOrgAddress,
+    metaCity,
+    metaState,
     h1Headings,
     h2Headings,
     bodyTextSample,
@@ -201,6 +297,10 @@ export async function scrapeWebsite(
     hasHours,
     hasPricing,
     hasTestimonials,
+    mentionsIntegrations,
+    mentionsAppointments,
+    mentionsRoomsOrStays,
+    mentionsContentOrBlog,
     internalLinks: internalLinks.slice(0, 20), // cap for storage
   };
 }

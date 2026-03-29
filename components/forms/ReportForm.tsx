@@ -18,6 +18,7 @@ const CATEGORIES = [
   "Legal / Law Firm",
   "Accounting / Financial",
   "Real Estate",
+  "Hotel / Hospitality",
   "Restaurant / Food",
   "Retail",
   "Fitness / Gym",
@@ -32,7 +33,6 @@ interface FormState {
   websiteUrl: string;
   category: string;
   city: string;
-  topServices: string;
   competitorUrls: string;
 }
 
@@ -43,7 +43,6 @@ export function ReportForm() {
     websiteUrl: "",
     category: "",
     city: "",
-    topServices: "",
     competitorUrls: "",
   });
   const [submitting, setSubmitting] = useState(false);
@@ -79,10 +78,6 @@ export function ReportForm() {
       websiteUrl: form.websiteUrl.trim() || undefined,
       category: form.category || undefined,
       city: form.city.trim() || undefined,
-      topServices: form.topServices
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
       competitorUrls: form.competitorUrls
         .split("\n")
         .map((s) => s.trim())
@@ -112,38 +107,43 @@ export function ReportForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Required fields */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-5">
+      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
         <h2 className="font-semibold text-slate-900 text-sm uppercase tracking-wider">
           Business details
         </h2>
 
+        {/* Option 1: Website URL */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Website URL{hasUrl && <span className="text-red-500"> *</span>}
+            Website URL <span className="text-red-500">*</span>
           </label>
           <input
-            type="url"
+            type="text"
             name="websiteUrl"
             value={form.websiteUrl}
             onChange={handleChange}
-            placeholder="https://yourwebsite.com"
+            placeholder="yourwebsite.com"
             className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400"
           />
           <p className="text-xs text-slate-400 mt-1">
-            We&apos;ll analyze your site and extract your business name automatically.{" "}
-            <span className="text-slate-500 font-medium">
-              Don&apos;t have a website? Enter name + city below instead.
-            </span>
+            We&apos;ll analyze your site and extract signals automatically.
           </p>
         </div>
 
-        {/* Name + city — required when no URL */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">
-              Business name
-              {!hasUrl && <span className="text-red-500"> *</span>}
-            </label>
+        {/* OR divider */}
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-px bg-slate-200" />
+          <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">or</span>
+          <div className="flex-1 h-px bg-slate-200" />
+        </div>
+
+        {/* Option 2: Name + City */}
+        <div>
+          <p className="text-sm font-medium text-slate-700 mb-2">
+            Business name &amp; city <span className="text-red-500">*</span>
+            <span className="text-slate-400 font-normal ml-1">(if no website)</span>
+          </p>
+          <div className="grid grid-cols-2 gap-3">
             <input
               type="text"
               name="businessName"
@@ -152,12 +152,6 @@ export function ReportForm() {
               placeholder="e.g. Blue Ridge HVAC"
               className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">
-              City / Location
-              {!hasUrl && <span className="text-red-500"> *</span>}
-            </label>
             <input
               type="text"
               name="city"
@@ -169,9 +163,11 @@ export function ReportForm() {
           </div>
         </div>
 
+        {/* Category — optional */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Business category
+            Business category{" "}
+            <span className="text-slate-400 font-normal">(optional)</span>
           </label>
           <select
             name="category"
@@ -186,23 +182,8 @@ export function ReportForm() {
               </option>
             ))}
           </select>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1.5">
-            Top services
-          </label>
-          <input
-            type="text"
-            name="topServices"
-            value={form.topServices}
-            onChange={handleChange}
-            placeholder="e.g. AC Repair, Furnace Installation, Duct Cleaning"
-            className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400"
-          />
           <p className="text-xs text-slate-400 mt-1">
-            Comma-separated. Helps us check how well your services are
-            positioned.
+            Helps us generate more accurate recommendations.
           </p>
         </div>
       </div>

@@ -1,18 +1,102 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Query Coverage Analysis
 //
-// Generates likely user queries from category + city + services, then checks
+// Generates likely user queries from profile + city + services, then checks
 // how well the scraped website content covers each query.
 //
 // ANALYTICAL ASSET: results stored in report_query_coverage for benchmarking
 // and future analytics across businesses and categories.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { WebsiteAnalysis, QueryCoverageRow, CanonicalCategory } from "@/lib/types";
-import { CATEGORY_NOUNS } from "./category-templates";
+import type {
+  WebsiteAnalysis,
+  QueryCoverageRow,
+  BusinessProfile,
+  BusinessFeatures,
+} from "@/lib/types";
+import { PATTERN_NOUNS, PATTERN_QUERY_INTENTS } from "./website-pattern-templates";
+import { SUBTYPE_NOUNS } from "./business-profile-templates";
 
-function getCategoryNoun(canonicalCategory: CanonicalCategory): string {
-  return CATEGORY_NOUNS[canonicalCategory] ?? "business";
+// Sector-specific nouns produce more precise queries (e.g. "restaurant near me"
+// instead of the generic "business near me" for food_and_beverage).
+// Subtype noun (more specific) is checked first.
+const SECTOR_NOUNS: Partial<Record<string, string>> = {
+  food_and_beverage:    "restaurant",
+  retail_store:         "shop",
+  hospitality:          "hotel",
+  health_wellness:      "wellness center",
+  fitness:              "gym",
+  home_services:        "contractor",
+  professional_services:"firm",
+};
+
+// ── Sector query intent definitions ──────────────────────────────────────────
+// Each intent has a display string AND explicit required terms for coverage scoring.
+// requiredTerms: terms that must appear somewhere in the page for strong/partial coverage.
+// termMatchMode "any" = ANY term satisfies the check (synonym family).
+// termMatchMode "all" (default) = ALL terms must match.
+
+interface SectorIntent {
+  intent: string;           // appended to noun: "hotel room rates"
+  requiredTerms: string[];  // coverage evidence
+  termMatchMode?: "all" | "any";
+}
+
+const SECTOR_QUERY_INTENTS: Partial<Record<string, SectorIntent[]>> = {
+  hospitality: [
+    { intent: "room rates",           requiredTerms: ["rate", "price", "per night", "nightly"],    termMatchMode: "any" },
+    { intent: "amenities",            requiredTerms: ["amenities", "pool", "wifi", "fitness", "gym", "breakfast"], termMatchMode: "any" },
+    { intent: "check-in time",        requiredTerms: ["check-in", "check in", "check-out", "checkout"],            termMatchMode: "any" },
+    { intent: "parking",              requiredTerms: ["parking"],                                   termMatchMode: "any" },
+    { intent: "pet policy",           requiredTerms: ["pet", "dog", "cat"],                         termMatchMode: "any" },
+    { intent: "cancellation policy",  requiredTerms: ["cancellation", "cancel", "refund", "policy"], termMatchMode: "any" },
+  ],
+  food_and_beverage: [
+    { intent: "menu",         requiredTerms: ["menu"],                                            termMatchMode: "any" },
+    { intent: "hours",        requiredTerms: ["hours", "open", "monday", "tuesday"],              termMatchMode: "any" },
+    { intent: "reservations", requiredTerms: ["reservation", "reserve", "book a table", "opentable"], termMatchMode: "any" },
+    { intent: "delivery",     requiredTerms: ["delivery", "takeout", "take-out", "order online"], termMatchMode: "any" },
+  ],
+  home_services: [
+    { intent: "free estimate",       requiredTerms: ["estimate", "quote", "free"],       termMatchMode: "any" },
+    { intent: "service area",        requiredTerms: ["service area", "serving", "area"], termMatchMode: "any" },
+    { intent: "licensed and insured",requiredTerms: ["licensed", "insured"],              termMatchMode: "any" },
+    { intent: "emergency service",   requiredTerms: ["emergency", "24/7", "urgent"],     termMatchMode: "any" },
+  ],
+  health_wellness: [
+    { intent: "accepts insurance",    requiredTerms: ["insurance", "accept"],     termMatchMode: "any" },
+    { intent: "new patients",         requiredTerms: ["patient", "new patient", "accepting"], termMatchMode: "any" },
+    { intent: "book appointment",     requiredTerms: ["appointment", "book", "schedule"], termMatchMode: "any" },
+    { intent: "services offered",     requiredTerms: ["service", "treatment"],   termMatchMode: "any" },
+  ],
+  fitness: [
+    { intent: "membership pricing",   requiredTerms: ["membership", "price", "rate", "monthly"], termMatchMode: "any" },
+    { intent: "class schedule",       requiredTerms: ["class", "schedule", "timetable"],         termMatchMode: "any" },
+    { intent: "free trial",           requiredTerms: ["trial", "free class", "first class"],     termMatchMode: "any" },
+    { intent: "personal training",    requiredTerms: ["personal training", "trainer"],           termMatchMode: "any" },
+  ],
+  professional_services: [
+    { intent: "free consultation", requiredTerms: ["consultation", "free", "consult"], termMatchMode: "any" },
+    { intent: "fees",              requiredTerms: ["fee", "rate", "charge", "cost"],   termMatchMode: "any" },
+    { intent: "practice areas",    requiredTerms: ["practice", "service", "area"],    termMatchMode: "any" },
+    { intent: "credentials",       requiredTerms: ["licensed", "certified", "accredited", "years"], termMatchMode: "any" },
+  ],
+  retail_store: [
+    { intent: "store hours",    requiredTerms: ["hours", "open"],                  termMatchMode: "any" },
+    { intent: "return policy",  requiredTerms: ["return", "refund", "policy"],     termMatchMode: "any" },
+    { intent: "online shopping",requiredTerms: ["online", "shop", "order", "cart"],termMatchMode: "any" },
+    { intent: "gift cards",     requiredTerms: ["gift card", "gift certificate"],  termMatchMode: "any" },
+  ],
+};
+
+function getQueryNoun(profile: BusinessProfile, _features: BusinessFeatures): string {
+  // Priority: subtype noun (most specific) → sector noun → pattern noun → generic
+  const subtypeNoun = profile.subtype ? SUBTYPE_NOUNS[profile.subtype] : undefined;
+  return subtypeNoun ?? SECTOR_NOUNS[profile.sector ?? ""] ?? PATTERN_NOUNS[profile.website_pattern] ?? "business";
+}
+
+function getSectorIntents(profile: BusinessProfile): SectorIntent[] | null {
+  return SECTOR_QUERY_INTENTS[profile.sector ?? ""] ?? null;
 }
 
 // ── Query templates ───────────────────────────────────────────────────────────
@@ -24,18 +108,28 @@ interface QueryTemplate {
   requiredTerms: string[];
   /** Terms that should appear in title or headings for "strong" coverage */
   prominentTerms: string[];
+  /**
+   * "all" (default): ALL requiredTerms must match for allMatched.
+   * "any": ANY requiredTerm match satisfies the requirement (synonym matching).
+   */
+  termMatchMode?: "all" | "any";
 }
 
 function buildQueryTemplates(
-  canonicalCategory: CanonicalCategory,
+  profile: BusinessProfile,
+  features: BusinessFeatures,
   city: string,
   services: string[]
 ): QueryTemplate[] {
-  const noun = getCategoryNoun(canonicalCategory);
+  const noun = getQueryNoun(profile, features);
   const templates: QueryTemplate[] = [];
 
-  // Brand local queries (high intent)
-  if (city) {
+  const hasLocalIntent = ["local_physical_business", "appointment_service"].includes(
+    profile.website_pattern
+  );
+
+  // Brand local queries (high intent) — only for patterns with a location component
+  if (city && hasLocalIntent) {
     templates.push({
       query: `best ${noun} in ${city}`,
       queryType: "brand_local",
@@ -62,18 +156,20 @@ function buildQueryTemplates(
     });
   }
 
-  // Generic queries (no city)
-  templates.push({
-    query: `${noun} near me`,
-    queryType: "proximity_generic",
-    requiredTerms: [noun],
-    prominentTerms: [],
-  });
+  // Generic proximity query — only for patterns with a location component
+  if (hasLocalIntent) {
+    templates.push({
+      query: `${noun} near me`,
+      queryType: "proximity_generic",
+      requiredTerms: [noun],
+      prominentTerms: [],
+    });
+  }
 
   // Service-specific queries
   for (const service of services.slice(0, 4)) {
     const sLower = service.toLowerCase();
-    if (city) {
+    if (city && hasLocalIntent) {
       templates.push({
         query: `${sLower} in ${city}`,
         queryType: "service_local",
@@ -87,6 +183,31 @@ function buildQueryTemplates(
       requiredTerms: [sLower],
       prominentTerms: [],
     });
+  }
+
+  // Sector-specific intents with explicit required terms — sector takes priority
+  const sectorIntents = getSectorIntents(profile);
+  if (sectorIntents) {
+    for (const si of sectorIntents) {
+      templates.push({
+        query: `${noun} ${si.intent}`,
+        queryType: `intent_${profile.sector ?? profile.website_pattern}`,
+        requiredTerms: si.requiredTerms,
+        prominentTerms: [],
+        termMatchMode: si.termMatchMode,
+      });
+    }
+  } else {
+    // Fallback to generic pattern intents (string array) for sectors without specific intents
+    const patternIntents = PATTERN_QUERY_INTENTS[profile.website_pattern] ?? [];
+    for (const intent of patternIntents) {
+      templates.push({
+        query: `${noun} ${intent}`,
+        queryType: `pattern_${profile.website_pattern}`,
+        requiredTerms: [noun],
+        prominentTerms: [],
+      });
+    }
   }
 
   return templates;
@@ -119,9 +240,10 @@ function checkCoverage(
     }
   }
 
-  const titleMatch = template.prominentTerms.length > 0
-    ? template.prominentTerms.some((t) => titleText.includes(t.toLowerCase()))
-    : template.requiredTerms.some((t) => titleText.includes(t.toLowerCase()));
+  const titleMatch =
+    template.prominentTerms.length > 0
+      ? template.prominentTerms.some((t) => titleText.includes(t.toLowerCase()))
+      : template.requiredTerms.some((t) => titleText.includes(t.toLowerCase()));
 
   const headingMatch = template.requiredTerms.some((t) =>
     headingText.includes(t.toLowerCase())
@@ -131,19 +253,33 @@ function checkCoverage(
     bodyText.includes(t.toLowerCase())
   );
 
-  const servicePageMatch = analysis.hasServicePages &&
+  const servicePageMatch =
+    analysis.hasServicePages &&
     template.requiredTerms.some((t) => headingText.includes(t.toLowerCase()));
 
   // Coverage classification:
-  // strong  — all terms matched AND at least one in title or heading
-  // partial — all terms matched in body but not in title/heading, OR most terms matched
+  // strong  — required terms satisfied AND at least one in title or heading
+  // partial — required terms satisfied in body but not prominently, OR most matched
   // weak    — key terms missing
+  //
+  // For termMatchMode "any": satisfied when ANY required term matches (synonym families).
+  // For termMatchMode "all" (default): ALL required terms must match.
+  const matchMode = template.termMatchMode ?? "all";
+  const allMatched =
+    matchMode === "any" ? matchedTerms.length > 0 : missingTerms.length === 0;
+  const mostMatched =
+    matchMode === "all" &&
+    matchedTerms.length >= template.requiredTerms.length - 1 &&
+    template.requiredTerms.length > 1;
+
+  // For "any" mode: the remaining unmatched terms are synonym alternatives, not
+  // genuine gaps — the intent is already satisfied by whichever term matched.
+  // Clear missingTerms so the UI doesn't show "Missing: pool, gym, breakfast"
+  // when "wifi" already satisfied the amenities intent.
+  const effectiveMissingTerms =
+    matchMode === "any" && allMatched ? [] : missingTerms;
+
   let coverage: "strong" | "partial" | "weak";
-
-  const allMatched = missingTerms.length === 0;
-  const mostMatched = matchedTerms.length >= template.requiredTerms.length - 1
-    && template.requiredTerms.length > 1;
-
   if (allMatched && (titleMatch || headingMatch)) {
     coverage = "strong";
   } else if (allMatched || mostMatched) {
@@ -156,7 +292,7 @@ function checkCoverage(
     query: template.query,
     queryType: template.queryType,
     coverage,
-    missingTerms,
+    missingTerms: effectiveMissingTerms,
     matchedTerms,
     titleMatch,
     headingMatch,
@@ -170,15 +306,16 @@ function checkCoverage(
 /**
  * Generate and evaluate query coverage for a website analysis.
  * Purely deterministic — no LLM.
+ *
+ * Query noun priority: SECTOR_NOUNS[sector] → detectedBusinessTerms[0] → "business"
  */
 export function computeQueryCoverage(
   analysis: WebsiteAnalysis,
-  canonicalCategory: CanonicalCategory,
+  profile: BusinessProfile,
+  features: BusinessFeatures,
   city: string,
   services: string[]
 ): QueryCoverageRow[] {
-  // Still generate queries for no-URL reports using the effective city/category —
-  // just coverage will all be "weak" since there's no content to match against.
-  const templates = buildQueryTemplates(canonicalCategory, city, services);
+  const templates = buildQueryTemplates(profile, features, city, services);
   return templates.map((t) => checkCoverage(t, analysis));
 }

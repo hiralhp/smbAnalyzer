@@ -16,6 +16,12 @@ export interface ReportSummaryPromptContext {
   scores: ScoreBreakdown;
   strengths: Finding[];
   gaps: Finding[];
+  /** Canonical sector (e.g. "food_and_beverage") for category-specific content */
+  sector?: string | null;
+  /** Canonical subtype (e.g. "restaurant", "cafe_coffee_shop") for finer targeting */
+  subtype?: string | null;
+  /** Pre-generated category-specific FAQ questions — LLM should write answers for these */
+  faqQuestions?: string[];
 }
 
 export function buildReportSummaryPrompt(ctx: ReportSummaryPromptContext): {
@@ -49,6 +55,8 @@ JSON schema:
 ## Business Info
 - Name: ${ctx.formInput.businessName}
 - Category: ${ctx.formInput.category || "Not specified"}
+- Detected Sector: ${ctx.sector ?? "Not detected"}
+- Detected Subtype: ${ctx.subtype ?? "Not detected"}
 - Location: ${ctx.formInput.city || "Not specified"}
 - Website: ${ctx.formInput.websiteUrl || "Not provided"}
 - Top Services: ${ctx.formInput.topServices?.join(", ") || "Not specified"}
@@ -88,7 +96,10 @@ ${ctx.websiteAnalysis.bodyTextSample?.slice(0, 600) || "Not available"}
 
 Choose the most impactful contentAssetType based on the biggest gap detected.
 For the contentAssetDraft, write the FULL content asset (not just a description of it).
-If contentAssetType is "faq", write 5–8 realistic Q&A pairs specific to this business category and location.
+${ctx.faqQuestions && ctx.faqQuestions.length > 0
+  ? `If contentAssetType is "faq", write answers for EXACTLY these category-specific questions (do not substitute generic questions):
+${ctx.faqQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`
+  : `If contentAssetType is "faq", write 5–8 realistic Q&A pairs specific to this business category and location.`}
 If contentAssetType is "service_page", write a complete service page outline with sections and copy.
 If contentAssetType is "homepage_copy", write a full homepage hero + value proposition block.
 If contentAssetType is "review_request", write a short personalized message asking a happy customer for a review.
