@@ -28,9 +28,9 @@ const features = [
 ];
 
 const metrics = [
-  { value: "5 min", label: "to get your report" },
-  { value: "6", label: "scored dimensions" },
-  { value: "100%", label: "free" },
+  { value: "5 min", label: "Get your full report" },
+  { value: "6 dimensions", label: "Scored across visibility, content, trust, and more" },
+  { value: "100% free", label: "No signup required" },
 ];
 
 export default function HomePage() {

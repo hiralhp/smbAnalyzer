@@ -52,7 +52,13 @@ function businessAppears(
 function parseCompetitors(
   raw: string
 ): Array<{ name: string; reason: string; confidence: Confidence }> {
-  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    console.error("[DIAG Sim] parseCompetitors: invalid JSON from LLM:", raw?.slice(0, 200));
+    return [];
+  }
   if (!Array.isArray(parsed.competitors)) return [];
   return (parsed.competitors as unknown[]).filter(
     (c): c is { name: string; reason: string; confidence: Confidence } =>

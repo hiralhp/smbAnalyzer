@@ -8,7 +8,7 @@
 // Both functions are non-blocking and degrade gracefully.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getGrokProvider } from "@/lib/llm/grok";
+import { getLlmProvider } from "@/lib/llm";
 
 const VALIDATE_TIMEOUT_MS = 5_000;
 
@@ -52,8 +52,8 @@ export async function inferWebsiteUrl(
 ): Promise<string | null> {
   if (!businessName.trim()) return null;
 
-  const provider = getGrokProvider();
-  if (!provider) return null;
+  if (process.env.MOCK_LLM === "true") return null;
+  const provider = getLlmProvider();
 
   const location = city ? ` located in ${city}` : "";
 

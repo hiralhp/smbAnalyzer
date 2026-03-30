@@ -7,7 +7,7 @@
 // Non-blocking: returns null when provider unavailable or response invalid.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getGrokProvider } from "@/lib/llm/grok";
+import { getLlmProvider } from "@/lib/llm";
 import { buildGroqClassificationPrompt } from "@/lib/prompts/groq-classification";
 import type { GroqClassificationResult, WebsiteAnalysis } from "@/lib/types";
 
@@ -101,8 +101,8 @@ export async function classifyWithGroq(
     };
   }
 
-  const provider = getGrokProvider();
-  if (!provider) return null;
+  if (process.env.MOCK_LLM === "true") return null;
+  const provider = getLlmProvider();
 
   const prompt = buildGroqClassificationPrompt({
     businessName,

@@ -403,6 +403,8 @@ export interface Report {
   inferredCity?: string;
   visibilitySimulation?: VisibilitySimulationResult;
   llmCompetitorAnalysis?: LlmCompetitorAnalysisRow[];
+  /** Discovered competitors from report_competitors — used as fallback when simulation rows are absent */
+  discoveredCompetitors?: CompetitorRecord[];
 }
 
 export interface Recommendation {

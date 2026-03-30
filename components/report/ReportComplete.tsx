@@ -29,7 +29,7 @@ const CONTENT_ASSET_LABELS: Record<string, string> = {
 const SEO_STRUCTURAL = /\bh1\b|\bh2\b|heading count|meta description|page title|title tag|title length/i;
 
 export function ReportComplete({ report }: ReportCompleteProps) {
-  const { business, scores, scoreExplanation, findings, recommendations, llmOutput, websiteSignals, competitorSignals, queryCoverage, llmCompetitorAnalysis } = report;
+  const { business, scores, scoreExplanation, findings, recommendations, llmOutput, websiteSignals, competitorSignals, queryCoverage, llmCompetitorAnalysis, discoveredCompetitors } = report;
 
   const gaps = findings?.filter((f) => f.type === "gap") ?? [];
   const aiGaps = gaps.filter((g) => !SEO_STRUCTURAL.test(g.label)).slice(0, 4);
@@ -129,6 +129,7 @@ export function ReportComplete({ report }: ReportCompleteProps) {
             <LlmCompetitorSection
               rows={llmCompetitorAnalysis ?? []}
               businessName={business.name}
+              discoveredCompetitors={discoveredCompetitors}
             />
 
             {/* Why You Win / Lose vs Competitors */}
@@ -137,6 +138,7 @@ export function ReportComplete({ report }: ReportCompleteProps) {
                 rows={llmCompetitorAnalysis ?? []}
                 businessName={business.name}
                 findings={findings}
+                discoveredCompetitors={discoveredCompetitors}
               />
             )}
 

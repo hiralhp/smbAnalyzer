@@ -1,11 +1,12 @@
 "use client";
 
-import type { LlmCompetitorAnalysisRow, Finding } from "@/lib/types";
+import type { LlmCompetitorAnalysisRow, Finding, CompetitorRecord } from "@/lib/types";
 
 interface WinLossSectionProps {
   rows: LlmCompetitorAnalysisRow[];
   businessName: string;
   findings: Finding[];
+  discoveredCompetitors?: CompetitorRecord[];
 }
 
 const SEO_STRUCTURAL = /\bh1\b|\bh2\b|heading count|meta description|page title|title tag|title length/i;
@@ -60,9 +61,7 @@ function aggregateCompetitors(rows: LlmCompetitorAnalysisRow[], businessName: st
     .slice(0, 4);
 }
 
-export function WinLossSection({ rows, businessName, findings }: WinLossSectionProps) {
-  if (!rows.length) return null;
-
+export function WinLossSection({ rows, businessName, findings, discoveredCompetitors }: WinLossSectionProps) {
   const total = rows.length;
   const businessCount = rows.filter((r) => r.targetBusinessLikelyToAppear).length;
   const topCompetitors = aggregateCompetitors(rows, businessName);
@@ -71,7 +70,12 @@ export function WinLossSection({ rows, businessName, findings }: WinLossSectionP
     .filter((f) => f.type === "gap" && !SEO_STRUCTURAL.test(f.label))
     .slice(0, 3);
 
-  if (!topCompetitors.length && !aiGaps.length) return null;
+  // Use discovered competitors as fallback when simulation rows are absent
+  const fallbackCompetitors = !topCompetitors.length
+    ? (discoveredCompetitors ?? []).slice(0, 4)
+    : [];
+
+  if (!topCompetitors.length && !fallbackCompetitors.length && !aiGaps.length) return null;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
@@ -85,7 +89,7 @@ export function WinLossSection({ rows, businessName, findings }: WinLossSectionP
         <h2 className="font-semibold text-slate-900">Why you win / lose vs competitors</h2>
       </div>
 
-      {/* AI frequency leaderboard */}
+      {/* AI frequency leaderboard — full simulation data */}
       {topCompetitors.length > 0 && (
         <div className="mb-6">
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
@@ -126,6 +130,24 @@ export function WinLossSection({ rows, businessName, findings }: WinLossSectionP
               {topCompetitors[0].reason ? ` — ${topCompetitors[0].reason.charAt(0).toLowerCase()}${topCompetitors[0].reason.slice(1)}` : ""}.
             </p>
           )}
+        </div>
+      )}
+
+      {/* Fallback competitor list — when simulation unavailable but discovery ran */}
+      {fallbackCompetitors.length > 0 && (
+        <div className="mb-6">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+            Likely competitors in your category
+          </p>
+          <div className="space-y-1.5">
+            {fallbackCompetitors.map((c, i) => (
+              <div key={i} className="flex items-center gap-2 text-sm text-slate-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-300 flex-shrink-0" />
+                {c.name}
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-slate-400 mt-3">Full per-query comparison requires a working LLM connection.</p>
         </div>
       )}
 

@@ -12,7 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { LlmDiscoveredCompetitor } from "@/lib/types";
-import { getGrokProvider } from "@/lib/llm/grok";
+import { getLlmProvider } from "@/lib/llm";
 import { buildCompetitorDiscoveryPrompt } from "@/lib/prompts/competitor-discovery";
 
 interface DiscoveryInput {
@@ -58,8 +58,8 @@ async function validateDomain(domain: string): Promise<boolean> {
 export async function discoverCompetitorsWithGrok(
   input: DiscoveryInput
 ): Promise<LlmDiscoveredCompetitor[]> {
-  const provider = getGrokProvider();
-  if (!provider) return [];
+  if (process.env.MOCK_LLM === "true") return [];
+  const provider = getLlmProvider();
 
   const { system, user } = buildCompetitorDiscoveryPrompt(input);
 

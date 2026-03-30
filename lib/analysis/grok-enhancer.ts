@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { GrokEnhancementInput, GrokEnhancement } from "@/lib/types";
-import { getGrokProvider } from "@/lib/llm/grok";
+import { getLlmProvider } from "@/lib/llm";
 import { buildGrokEnhancementPrompt } from "@/lib/prompts/grok-enhancement";
 
 /**
@@ -33,8 +33,9 @@ import { buildGrokEnhancementPrompt } from "@/lib/prompts/grok-enhancement";
 export async function enhanceWithGrok(
   input: GrokEnhancementInput
 ): Promise<GrokEnhancement | null> {
-  const provider = getGrokProvider();
-  if (!provider) return null;
+  if (process.env.MOCK_LLM === "true") return null;
+  if (process.env.AI_ENHANCEMENT_ENABLED === "false") return null;
+  const provider = getLlmProvider();
 
   const { system, user } = buildGrokEnhancementPrompt(input);
 
