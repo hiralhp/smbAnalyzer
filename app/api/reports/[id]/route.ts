@@ -281,14 +281,14 @@ export async function GET(
     }
 
     // Discovered competitors — fallback for rendering when simulation is unavailable
-    const { data: competitorRows } = await supabase
+    const { data: discoveredRows } = await supabase
       .from("report_competitors")
       .select("name, website_url, source")
       .eq("report_id", id)
       .order("created_at");
 
-    if (competitorRows?.length) {
-      report.discoveredCompetitors = competitorRows.map((r) => ({
+    if (discoveredRows?.length) {
+      report.discoveredCompetitors = discoveredRows.map((r) => ({
         name: r.name,
         websiteUrl: r.website_url ?? undefined,
         source: r.source as "user_provided" | "auto_discovered" | "mock",
