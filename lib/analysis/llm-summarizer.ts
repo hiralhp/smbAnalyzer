@@ -86,7 +86,7 @@ function buildFallbackSummary(
   gaps: Finding[],
   faqQuestions?: string[]
 ): LlmReportSummary {
-  const businessName = formInput.businessName;
+  const businessName = formInput.businessName || "This business";
   const city = formInput.city ? ` in ${formInput.city}` : "";
   const category = formInput.category ? ` (${formInput.category})` : "";
 

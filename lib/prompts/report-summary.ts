@@ -53,7 +53,7 @@ JSON schema:
   const user = `Here is the structured analysis for this business. Produce the report summary JSON.
 
 ## Business Info
-- Name: ${ctx.formInput.businessName}
+- Name: ${ctx.formInput.businessName || "Not specified"}
 - Category: ${ctx.formInput.category || "Not specified"}
 - Detected Sector: ${ctx.sector ?? "Not detected"}
 - Detected Subtype: ${ctx.subtype ?? "Not detected"}

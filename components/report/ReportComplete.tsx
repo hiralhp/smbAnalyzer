@@ -126,17 +126,15 @@ export function ReportComplete({ report }: ReportCompleteProps) {
           <div className="lg:col-span-2 space-y-8">
 
             {/* PRIMARY: AI Competitor Visibility */}
-            {llmCompetitorAnalysis && llmCompetitorAnalysis.length > 0 && (
-              <LlmCompetitorSection
-                rows={llmCompetitorAnalysis}
-                businessName={business.name}
-              />
-            )}
+            <LlmCompetitorSection
+              rows={llmCompetitorAnalysis ?? []}
+              businessName={business.name}
+            />
 
             {/* Why You Win / Lose vs Competitors */}
-            {llmCompetitorAnalysis && llmCompetitorAnalysis.length > 0 && findings && (
+            {findings && (
               <WinLossSection
-                rows={llmCompetitorAnalysis}
+                rows={llmCompetitorAnalysis ?? []}
                 businessName={business.name}
                 findings={findings}
               />
