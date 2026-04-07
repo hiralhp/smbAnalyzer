@@ -213,6 +213,33 @@ function buildQueryTemplates(
   return templates;
 }
 
+// ── Reputation modifier detection ────────────────────────────────────────────
+// Queries containing superlatives like "best" or "top" require off-site authority
+// signals (reviews, awards, press) that on-site content cannot validate.
+
+const REPUTATION_MODIFIERS_RE = /\b(best|top|leading|highly[\s-]rated|award[\s-]winning|most\s+trusted)\b/i;
+
+function isReputationModifierQuery(query: string): boolean {
+  return REPUTATION_MODIFIERS_RE.test(query);
+}
+
+function hasAuthoritySignals(analysis: WebsiteAnalysis): boolean {
+  return analysis.hasTestimonials || analysis.hasTrustSignals;
+}
+
+// ── Evidence gates — downgrade Strong → Partial when key signal is absent ────
+// Maps queryType → the WebsiteAnalysis signal that must be present for Strong.
+// If the signal is absent, coverage is capped at Partial and evidenceNote is set.
+
+const EVIDENCE_GATES: Partial<Record<string, { signal: keyof WebsiteAnalysis; note: string }>> = {
+  brand_local:       { signal: "hasLocationMention", note: "Location signal absent — add your city name to headings" },
+  proximity_local:   { signal: "hasLocationMention", note: "Location signal absent — add your city name to headings" },
+  service_local:     { signal: "hasServicePages",    note: "No dedicated service pages detected" },
+  service_proximity: { signal: "hasServicePages",    note: "No dedicated service pages detected" },
+  reputation_local:  { signal: "hasTestimonials",    note: "No review or testimonial content found" },
+  price_local:       { signal: "hasPricing",         note: "No pricing content found" },
+};
+
 // ── Coverage checker ──────────────────────────────────────────────────────────
 
 function checkCoverage(
@@ -279,13 +306,37 @@ function checkCoverage(
   const effectiveMissingTerms =
     matchMode === "any" && allMatched ? [] : missingTerms;
 
-  let coverage: "strong" | "partial" | "weak";
+  let coverage: "strong" | "partial" | "weak" | "aspirational";
   if (allMatched && (titleMatch || headingMatch)) {
     coverage = "strong";
   } else if (allMatched || mostMatched) {
     coverage = "partial";
   } else {
     coverage = "weak";
+  }
+
+  // Evidence gate: downgrade Strong → Partial when a required signal is absent
+  let evidenceNote: string | undefined;
+  if (coverage === "strong") {
+    const gate = EVIDENCE_GATES[template.queryType ?? ""];
+    if (gate && !analysis[gate.signal]) {
+      coverage = "partial";
+      evidenceNote = gate.note;
+    }
+  }
+
+  // Reputation gate — fires after evidence gates; has final say.
+  // On-site content cannot validate "best X" queries — those require off-site authority.
+  if (isReputationModifierQuery(template.query)) {
+    if (!hasAuthoritySignals(analysis)) {
+      coverage = "aspirational";
+      evidenceNote =
+        "Broad recommendation queries require on-site reviews, testimonials, or trust credentials. Competitors with stronger authority signals are more likely to appear here.";
+    } else if (coverage === "strong") {
+      coverage = "partial";
+      evidenceNote =
+        "Authority signals detected, but market-level recommendation confidence also requires off-site validation (reviews, awards, press).";
+    }
   }
 
   return {
@@ -298,6 +349,7 @@ function checkCoverage(
     headingMatch,
     bodyMatch,
     servicePageMatch,
+    evidenceNote,
   };
 }
 

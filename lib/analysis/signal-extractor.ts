@@ -12,8 +12,9 @@
 // - No meaningful content to analyze
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { WebsiteAnalysis, LlmExtractedSignals } from "@/lib/types";
+import type { WebsiteAnalysis, LlmExtractedSignals, LlmProvider } from "@/lib/types";
 import { getLlmProvider } from "@/lib/llm";
+import { isGroqQuotaError } from "@/lib/errors";
 import { buildSignalExtractionPrompt } from "@/lib/prompts/signal-extraction";
 
 const REQUIRED_FIELDS: Array<keyof LlmExtractedSignals> = [
@@ -34,7 +35,8 @@ const REQUIRED_FIELDS: Array<keyof LlmExtractedSignals> = [
  * Returns null on any failure — deterministic scraper signals remain the fallback.
  */
 export async function extractSignalsWithLlm(
-  analysis: WebsiteAnalysis
+  analysis: WebsiteAnalysis,
+  providerOverride?: LlmProvider
 ): Promise<LlmExtractedSignals | null> {
   // Skip if there is nothing meaningful to analyze
   if (
@@ -47,7 +49,7 @@ export async function extractSignalsWithLlm(
 
   let provider;
   try {
-    provider = getLlmProvider();
+    provider = providerOverride ?? getLlmProvider();
   } catch {
     return null;
   }
@@ -66,6 +68,7 @@ export async function extractSignalsWithLlm(
       jsonMode: true,
     });
   } catch (err) {
+    if (isGroqQuotaError(err)) throw err;
     console.warn("[SignalExtractor] LLM call failed:", err);
     return null;
   }

@@ -94,9 +94,11 @@ export async function simulateVisibility(
     return null;
   }
 
-  // Pick top queries — prefer strong/partial coverage (more representative queries)
-  const coverageOrder = { strong: 0, partial: 1, weak: 2 } as const;
-  const selectedQueries = [...queryCoverageRows]
+  // Pick top queries — exclude Weak coverage (site has no evidence for them)
+  // Fall back to full list only when everything is Weak (no-URL mode, etc.)
+  const coverageOrder = { strong: 0, partial: 1, weak: 2, aspirational: 3 } as const;
+  const pool = queryCoverageRows.filter((q) => q.coverage !== "weak" && q.coverage !== "aspirational");
+  const selectedQueries = (pool.length > 0 ? pool : queryCoverageRows)
     .sort((a, b) => coverageOrder[a.coverage] - coverageOrder[b.coverage])
     .slice(0, MAX_QUERIES)
     .map((q) => q.query);

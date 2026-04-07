@@ -15,9 +15,10 @@
 // GrokEnhancementInput built from pipeline outputs.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { GrokEnhancementInput, GrokEnhancement } from "@/lib/types";
+import type { GrokEnhancementInput, GrokEnhancement, LlmProvider } from "@/lib/types";
 import { getLlmProvider } from "@/lib/llm";
 import { buildGrokEnhancementPrompt } from "@/lib/prompts/grok-enhancement";
+import { isGroqQuotaError } from "@/lib/errors";
 
 /**
  * Call Grok to enhance the deterministic report with polished narrative content.
@@ -31,11 +32,12 @@ import { buildGrokEnhancementPrompt } from "@/lib/prompts/grok-enhancement";
  * The pipeline must always fall back to deterministic content when this returns null.
  */
 export async function enhanceWithGrok(
-  input: GrokEnhancementInput
+  input: GrokEnhancementInput,
+  providerOverride?: LlmProvider
 ): Promise<GrokEnhancement | null> {
   if (process.env.MOCK_LLM === "true") return null;
   if (process.env.AI_ENHANCEMENT_ENABLED === "false") return null;
-  const provider = getLlmProvider();
+  const provider = providerOverride ?? getLlmProvider();
 
   const { system, user } = buildGrokEnhancementPrompt(input);
 
@@ -51,6 +53,7 @@ export async function enhanceWithGrok(
       jsonMode: true,
     });
   } catch (err) {
+    if (isGroqQuotaError(err)) throw err;
     console.error("[Grok Enhancer] API call failed:", err);
     return null;
   }

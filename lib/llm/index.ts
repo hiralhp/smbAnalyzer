@@ -68,3 +68,28 @@ export function getLlmProvider(): LlmProvider {
 export function resetLlmProvider(): void {
   _provider = null;
 }
+
+/**
+ * Returns a provider for a single request.
+ * - If `userApiKey` is provided, creates a fresh (non-cached) instance with
+ *   the user's key so the server default is never used for that request.
+ * - Otherwise falls back to the shared singleton from `getLlmProvider()`.
+ */
+export function getLlmProviderForRequest(userApiKey?: string): LlmProvider {
+  if (!userApiKey) return getLlmProvider();
+
+  const providerName = (process.env.LLM_PROVIDER ?? "openai").toLowerCase();
+  if (providerName === "anthropic") {
+    return new AnthropicProvider({
+      apiKey: userApiKey,
+      model: process.env.LLM_MODEL ?? "claude-haiku-4-5-20251001",
+      maxTokens: parseInt(process.env.LLM_MAX_TOKENS ?? "2048", 10),
+    });
+  }
+  return new OpenAICompatibleProvider({
+    apiKey: userApiKey,
+    baseUrl: process.env.LLM_BASE_URL ?? "https://api.groq.com/openai/v1",
+    model: process.env.LLM_MODEL ?? "llama3-8b-8192",
+    maxTokens: parseInt(process.env.LLM_MAX_TOKENS ?? "2048", 10),
+  });
+}

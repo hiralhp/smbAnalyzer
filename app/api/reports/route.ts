@@ -113,9 +113,13 @@ export async function POST(request: NextRequest) {
   // the client navigates to the report page. Errors are caught inside the
   // pipeline and stored in the DB as status="failed".
   const reportId = report.id;
-  await runAnalysisPipeline(reportId, formInput, inputMode).catch((err) => {
+  let needsPersonalGroqKey = false;
+  try {
+    const result = await runAnalysisPipeline(reportId, formInput, inputMode);
+    needsPersonalGroqKey = result.quotaLimitHit === true && !formInput.userApiKey;
+  } catch (err) {
     console.error("[POST /api/reports] Pipeline error for", reportId, err);
-  });
+  }
 
-  return NextResponse.json({ reportId }, { status: 201 });
+  return NextResponse.json({ reportId, needsPersonalGroqKey }, { status: 201 });
 }

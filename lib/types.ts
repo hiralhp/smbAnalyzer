@@ -92,6 +92,8 @@ export interface ReportFormInput {
   topServices?: string[];
   competitorUrls?: string[];
   competitorNames?: string[];
+  /** User-supplied Groq API key — used in place of the server default when provided */
+  userApiKey?: string;
 }
 
 // ── Website analysis ──────────────────────────────────────────────────────────
@@ -187,13 +189,15 @@ export interface Finding {
 export interface QueryCoverageRow {
   query: string;
   queryType?: string;
-  coverage: "strong" | "partial" | "weak";
+  coverage: "strong" | "partial" | "weak" | "aspirational";
   missingTerms: string[];
   matchedTerms: string[];
   titleMatch: boolean;
   headingMatch: boolean;
   bodyMatch: boolean;
   servicePageMatch: boolean;
+  /** Explanation shown when a query was downgraded from Strong to Partial */
+  evidenceNote?: string;
 }
 
 // ── Report signals ────────────────────────────────────────────────────────────
@@ -364,6 +368,8 @@ export interface AnalysisPipelineResult {
   llmSummary: LlmReportSummary;
   archetypeClassification?: ArchetypeClassification;
   businessProfile?: BusinessProfile;
+  /** True when any LLM call hit the shared key's rate/quota limit */
+  quotaLimitHit?: boolean;
 }
 
 // ── Report (full, assembled for UI) ──────────────────────────────────────────
@@ -399,6 +405,8 @@ export interface Report {
   competitorSignals?: CompetitorSignalSummary[];
   queryCoverage?: QueryCoverageRow[];
   faqs?: FaqRow[];
+  /** Number of pages crawled during analysis (homepage + sub-pages) */
+  pagesScanned?: number;
   inferredCategory?: string;
   inferredCity?: string;
   visibilitySimulation?: VisibilitySimulationResult;

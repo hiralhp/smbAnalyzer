@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { LlmCallOptions, LlmProvider } from "@/lib/types";
+import { GroqQuotaError } from "@/lib/errors";
 
 interface OpenAIConfig {
   apiKey: string;
@@ -54,10 +55,12 @@ export class OpenAICompatibleProvider implements LlmProvider {
     }
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(
-        `[OpenAI-compatible] HTTP ${response.status}: ${error}`
-      );
+      const body = await response.text();
+      // 429 = rate limit; 402 = quota/billing limit — treat both as recoverable
+      if (response.status === 429 || response.status === 402) {
+        throw new GroqQuotaError(response.status, body);
+      }
+      throw new Error(`[OpenAI-compatible] HTTP ${response.status}: ${body}`);
     }
 
     const data = (await response.json()) as {

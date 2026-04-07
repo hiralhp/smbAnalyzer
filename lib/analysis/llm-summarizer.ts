@@ -9,6 +9,7 @@ import type {
   WebsiteAnalysis,
   ScoreBreakdown,
   Finding,
+  LlmProvider,
   LlmReportSummary,
   ReportFormInput,
   BusinessProfile,
@@ -16,6 +17,7 @@ import type {
 import { getLlmProvider } from "@/lib/llm";
 import { buildReportSummaryPrompt } from "@/lib/prompts/report-summary";
 import { buildFaqDraft } from "@/lib/analysis/faq-generator";
+import { isGroqQuotaError } from "@/lib/errors";
 
 export async function generateLlmSummary(
   formInput: ReportFormInput,
@@ -23,7 +25,8 @@ export async function generateLlmSummary(
   scores: ScoreBreakdown,
   findings: Finding[],
   businessProfile?: BusinessProfile | null,
-  faqQuestions?: string[]
+  faqQuestions?: string[],
+  providerOverride?: LlmProvider
 ): Promise<LlmReportSummary> {
   const strengths = findings.filter((f) => f.type === "strength");
   const gaps = findings.filter((f) => f.type === "gap");
@@ -39,7 +42,7 @@ export async function generateLlmSummary(
     faqQuestions,
   });
 
-  const provider = getLlmProvider();
+  const provider = providerOverride ?? getLlmProvider();
 
   let rawResponse: string;
   try {
@@ -53,8 +56,8 @@ export async function generateLlmSummary(
       jsonMode: true,
     });
   } catch (err) {
+    if (isGroqQuotaError(err)) throw err; // let pipeline detect quota exhaustion
     console.error("[LLM Summarizer] Failed:", err);
-    // Return a graceful fallback so the report still renders
     return buildFallbackSummary(formInput, strengths, gaps, faqQuestions);
   }
 
@@ -80,7 +83,7 @@ export async function generateLlmSummary(
  * Uses category-specific FAQ questions (from generateFaqs) for the draft so the
  * content is never generic even without an LLM call.
  */
-function buildFallbackSummary(
+export function buildFallbackSummary(
   formInput: ReportFormInput,
   strengths: Finding[],
   gaps: Finding[],

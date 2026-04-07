@@ -30,7 +30,9 @@ import { classifyBusinessProfile } from "@/lib/analysis/business-profile-classif
 import { detectWebsitePattern } from "@/lib/analysis/website-pattern-detector";
 import { refineBusinessModelWithLlm } from "@/lib/analysis/business-model-refiner";
 import { extractLocation } from "@/lib/analysis/location-extractor";
-import { getLlmProvider } from "@/lib/llm";
+import { getLlmProviderForRequest } from "@/lib/llm";
+import { isGroqQuotaError } from "@/lib/errors";
+import { buildFallbackSummary } from "@/lib/analysis/llm-summarizer";
 import { generateFaqs, buildFaqDraft } from "@/lib/analysis/faq-generator";
 import { extractBusinessName } from "@/lib/analysis/business-name-extractor";
 import { inferBusinessFeatures } from "@/lib/analysis/business-features";
@@ -39,6 +41,7 @@ import { extractSignalsWithLlm } from "@/lib/analysis/signal-extractor";
 import { classifyWithGroq } from "@/lib/analysis/groq-classifier";
 import { discoverCompetitorsWithGrok } from "@/lib/analysis/competitor-discoverer";
 import { simulateVisibility } from "@/lib/analysis/visibility-simulator";
+import { crawlSiteForEvidence } from "@/lib/analysis/site-crawler";
 import { inferWebsiteUrl, buildYelpSearchUrl } from "@/lib/analysis/website-inferrer";
 import type {
   ReportFormInput,
@@ -50,6 +53,7 @@ import type {
   GrokEnhancementInput,
   GrokEnhancement,
   LlmExtractedSignals,
+  LlmReportSummary,
   VisibilitySimulationResult,
   VisibilitySimulationRow,
   GroqClassificationResult,
@@ -132,7 +136,7 @@ function buildKeywordCounts(analysis: WebsiteAnalysis): Record<string, number> {
   );
 }
 
-function buildEvidenceSnapshot(analysis: WebsiteAnalysis): Record<string, unknown> {
+function buildEvidenceSnapshot(analysis: WebsiteAnalysis, pagesScanned = 1): Record<string, unknown> {
   return {
     title: analysis.title,
     metaDescription: analysis.metaDescription,
@@ -149,6 +153,7 @@ function buildEvidenceSnapshot(analysis: WebsiteAnalysis): Record<string, unknow
     hasPricing: analysis.hasPricing,
     hasTestimonials: analysis.hasTestimonials,
     fetchError: analysis.fetchError,
+    pagesScanned,
   };
 }
 
@@ -296,6 +301,8 @@ export async function runAnalysisPipeline(
   inputMode: "url" | "name_city" = "url"
 ): Promise<AnalysisPipelineResult> {
   const supabase = createClient();
+  const llmProvider = getLlmProviderForRequest(formInput.userApiKey);
+  let quotaLimitHit = false;
 
   await supabase
     .from("reports")
@@ -353,6 +360,21 @@ export async function runAnalysisPipeline(
       }
     }
 
+    // ── Step 1a: Multi-page crawl ───────────────────────────────────────────
+    // Fetch high-value sub-pages (services, faq, about, contact) and merge
+    // their signals into the homepage analysis for richer coverage evidence.
+    let pagesScanned = 1;
+    if (!websiteAnalysis.fetchError && websiteAnalysis.internalLinks.length > 0) {
+      try {
+        const { merged, pagesScanned: n } = await crawlSiteForEvidence(websiteAnalysis);
+        websiteAnalysis = merged;
+        pagesScanned = n;
+        console.log(`[Pipeline] Step 1a: crawled ${pagesScanned} pages total`);
+      } catch (err) {
+        console.warn("[Pipeline] Step 1a crawl failed:", err);
+      }
+    }
+
     // ── Step 1b: Infer business features (deterministic) ───────────────────
     const businessFeatures = inferBusinessFeatures(websiteAnalysis);
 
@@ -372,7 +394,8 @@ export async function runAnalysisPipeline(
         formInput.businessName ?? "",
         formInput.category ?? null,
         formInput.city ?? null,
-        websiteAnalysis
+        websiteAnalysis,
+        llmProvider
       );
       if (groqClassification && groqClassification.sector !== "unknown") {
         const shouldOverride =
@@ -397,6 +420,7 @@ export async function runAnalysisPipeline(
         }
       }
     } catch (err) {
+      if (isGroqQuotaError(err)) quotaLimitHit = true;
       console.warn("[Pipeline] Groq classification threw unexpectedly:", err);
     }
 
@@ -405,8 +429,9 @@ export async function runAnalysisPipeline(
     // Returns null when MOCK_LLM=true or LLM call fails.
     let llmSignals: LlmExtractedSignals | null = null;
     try {
-      llmSignals = await extractSignalsWithLlm(websiteAnalysis);
+      llmSignals = await extractSignalsWithLlm(websiteAnalysis, llmProvider);
     } catch (err) {
+      if (isGroqQuotaError(err)) quotaLimitHit = true;
       console.warn("[Pipeline] Signal extraction threw unexpectedly:", err);
     }
 
@@ -421,7 +446,6 @@ export async function runAnalysisPipeline(
     // ── Step 1e: LLM fallback for unknown low-confidence business model ────
     if (businessProfile.business_model === "unknown" && businessProfile.confidence === "low") {
       try {
-        const llmProvider = getLlmProvider();
         businessProfile = await refineBusinessModelWithLlm(
           businessProfile,
           websiteAnalysis,
@@ -489,7 +513,7 @@ export async function runAnalysisPipeline(
         city: effectiveCity,
         websiteUrl: formInput.websiteUrl,
         knownCompetitorDomains,
-      });
+      }, llmProvider);
       if (discoveredCompetitors.length > 0) {
         await supabase.from("report_competitors").insert(
           discoveredCompetitors.map((c) => ({
@@ -501,6 +525,7 @@ export async function runAnalysisPipeline(
         );
       }
     } catch (err) {
+      if (isGroqQuotaError(err)) quotaLimitHit = true;
       console.warn("[Pipeline] Competitor discovery threw unexpectedly:", err);
     }
 
@@ -556,14 +581,26 @@ export async function runAnalysisPipeline(
     const faqRows = generateFaqs(businessProfile);
 
     // ── Step 8: LLM summary (one optional call) ──────────────────────────────
-    const llmSummary = await generateLlmSummary(
-      effectiveFormInput,
-      websiteAnalysis,
-      scores,
-      findings,
-      businessProfile,
-      faqRows.map((f) => f.question)
-    );
+    let llmSummary: LlmReportSummary;
+    try {
+      llmSummary = await generateLlmSummary(
+        effectiveFormInput,
+        websiteAnalysis,
+        scores,
+        findings,
+        businessProfile,
+        faqRows.map((f) => f.question),
+        llmProvider
+      );
+    } catch (err) {
+      if (isGroqQuotaError(err)) quotaLimitHit = true;
+      llmSummary = buildFallbackSummary(
+        effectiveFormInput,
+        findings.filter((f) => f.type === "strength"),
+        findings.filter((f) => f.type === "gap"),
+        faqRows.map((f) => f.question)
+      );
+    }
 
     // Always use category-specific FAQ draft from faqRows — never the LLM/mock
     // generic fallback. Only falls back to generic if faqRows itself is generic.
@@ -610,8 +647,9 @@ export async function runAnalysisPipeline(
     // configured, the report renders fully from the deterministic outputs.
     let grokEnhancement: GrokEnhancement | null = null;
     try {
-      grokEnhancement = await enhanceWithGrok(grokInput);
+      grokEnhancement = await enhanceWithGrok(grokInput, llmProvider);
     } catch (err) {
+      if (isGroqQuotaError(err)) quotaLimitHit = true;
       console.error("[Pipeline] Grok enhancement threw unexpectedly:", err);
     }
 
@@ -647,7 +685,7 @@ export async function runAnalysisPipeline(
     const detectedServiceTerms = extractServiceTerms(websiteAnalysis, services);
     const keywordCounts = buildKeywordCounts(websiteAnalysis);
     const scannedPageType = detectPageType(websiteAnalysis);
-    const evidenceSnapshot = buildEvidenceSnapshot(websiteAnalysis);
+    const evidenceSnapshot = buildEvidenceSnapshot(websiteAnalysis, pagesScanned);
 
     // ── Step 10: Profile-aware query coverage ───────────────────────────────
     const queryCoverageRows = computeQueryCoverage(
@@ -935,6 +973,7 @@ export async function runAnalysisPipeline(
           heading_match: q.headingMatch,
           body_match: q.bodyMatch,
           service_page_match: q.servicePageMatch,
+          evidence_note: q.evidenceNote ?? null,
         }))
       );
     }
@@ -1012,6 +1051,7 @@ export async function runAnalysisPipeline(
       llmSummary,
       archetypeClassification: archetypeResult,
       businessProfile,
+      quotaLimitHit,
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

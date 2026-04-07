@@ -196,6 +196,9 @@ export async function GET(
     }
 
     if (websiteAnalysis) {
+      const snap = websiteAnalysis.evidence_snapshot as Record<string, unknown> | null;
+      if (typeof snap?.pagesScanned === "number") report.pagesScanned = snap.pagesScanned;
+
       const signals: WebsiteSignalSummary = {
         url: websiteAnalysis.url,
         title: websiteAnalysis.title ?? undefined,
@@ -227,13 +230,14 @@ export async function GET(
         (q): QueryCoverageRow => ({
           query: q.query,
           queryType: q.query_type ?? undefined,
-          coverage: q.coverage as "strong" | "partial" | "weak",
+          coverage: q.coverage as "strong" | "partial" | "weak" | "aspirational",
           missingTerms: q.missing_terms ?? [],
           matchedTerms: q.matched_terms ?? [],
           titleMatch: q.title_match ?? false,
           headingMatch: q.heading_match ?? false,
           bodyMatch: q.body_match ?? false,
           servicePageMatch: q.service_page_match ?? false,
+          evidenceNote: q.evidence_note ?? undefined,
         })
       );
     }

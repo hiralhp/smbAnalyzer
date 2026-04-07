@@ -11,8 +11,9 @@
 // - No valid domains survive HEAD validation
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { LlmDiscoveredCompetitor } from "@/lib/types";
+import type { LlmDiscoveredCompetitor, LlmProvider } from "@/lib/types";
 import { getLlmProvider } from "@/lib/llm";
+import { isGroqQuotaError } from "@/lib/errors";
 import { buildCompetitorDiscoveryPrompt } from "@/lib/prompts/competitor-discovery";
 
 interface DiscoveryInput {
@@ -56,10 +57,11 @@ async function validateDomain(domain: string): Promise<boolean> {
  * Each suggested domain is validated with a HEAD request before inclusion.
  */
 export async function discoverCompetitorsWithGrok(
-  input: DiscoveryInput
+  input: DiscoveryInput,
+  providerOverride?: LlmProvider
 ): Promise<LlmDiscoveredCompetitor[]> {
   if (process.env.MOCK_LLM === "true") return [];
-  const provider = getLlmProvider();
+  const provider = providerOverride ?? getLlmProvider();
 
   const { system, user } = buildCompetitorDiscoveryPrompt(input);
 
@@ -75,6 +77,7 @@ export async function discoverCompetitorsWithGrok(
       jsonMode: true,
     });
   } catch (err) {
+    if (isGroqQuotaError(err)) throw err;
     console.warn("[CompetitorDiscoverer] Grok call failed:", err);
     return [];
   }

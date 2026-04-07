@@ -29,7 +29,7 @@ const CONTENT_ASSET_LABELS: Record<string, string> = {
 const SEO_STRUCTURAL = /\bh1\b|\bh2\b|heading count|meta description|page title|title tag|title length/i;
 
 export function ReportComplete({ report }: ReportCompleteProps) {
-  const { business, scores, scoreExplanation, findings, recommendations, llmOutput, websiteSignals, competitorSignals, queryCoverage, llmCompetitorAnalysis, discoveredCompetitors } = report;
+  const { business, scores, scoreExplanation, findings, recommendations, llmOutput, websiteSignals, competitorSignals, queryCoverage, llmCompetitorAnalysis, discoveredCompetitors, pagesScanned } = report;
 
   const gaps = findings?.filter((f) => f.type === "gap") ?? [];
   const aiGaps = gaps.filter((g) => !SEO_STRUCTURAL.test(g.label)).slice(0, 4);
@@ -218,7 +218,7 @@ export function ReportComplete({ report }: ReportCompleteProps) {
 
             {/* Query coverage */}
             {queryCoverage && queryCoverage.length > 0 && (
-              <QueryCoverage rows={queryCoverage} />
+              <QueryCoverage rows={queryCoverage} pagesScanned={pagesScanned} />
             )}
 
             {/* Content Asset */}
