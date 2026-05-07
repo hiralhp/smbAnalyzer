@@ -130,7 +130,13 @@ export function ReportComplete({ report }: ReportCompleteProps) {
               rows={llmCompetitorAnalysis ?? []}
               businessName={business.name}
               discoveredCompetitors={discoveredCompetitors}
+              gapExplanations={report.visibilitySimulation?.gapExplanations}
             />
+
+            {/* Query coverage */}
+            {queryCoverage && queryCoverage.length > 0 && (
+              <QueryCoverage rows={queryCoverage} pagesScanned={pagesScanned} />
+            )}
 
             {/* Why You Win / Lose vs Competitors */}
             {findings && (
@@ -214,11 +220,6 @@ export function ReportComplete({ report }: ReportCompleteProps) {
                   ))}
                 </div>
               </div>
-            )}
-
-            {/* Query coverage */}
-            {queryCoverage && queryCoverage.length > 0 && (
-              <QueryCoverage rows={queryCoverage} pagesScanned={pagesScanned} />
             )}
 
             {/* Content Asset */}

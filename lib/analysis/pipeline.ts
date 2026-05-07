@@ -33,6 +33,11 @@ import { extractLocation } from "@/lib/analysis/location-extractor";
 import { getLlmProviderForRequest } from "@/lib/llm";
 import { isGroqQuotaError } from "@/lib/errors";
 import { buildFallbackSummary } from "@/lib/analysis/llm-summarizer";
+import { refineFoodSubtype } from "@/lib/analysis/groq-classifier";
+import { scoreContentQualityWithLlm } from "@/lib/analysis/content-quality-scorer";
+import { enhanceQueryCoverageWithSemantics } from "@/lib/analysis/semantic-query-enhancer";
+import { compareWithCompetitors } from "@/lib/analysis/competitor-comparator";
+import { explainVisibilityGaps } from "@/lib/analysis/visibility-explainer";
 import { generateFaqs, buildFaqDraft } from "@/lib/analysis/faq-generator";
 import { extractBusinessName } from "@/lib/analysis/business-name-extractor";
 import { inferBusinessFeatures } from "@/lib/analysis/business-features";
@@ -424,6 +429,24 @@ export async function runAnalysisPipeline(
       console.warn("[Pipeline] Groq classification threw unexpectedly:", err);
     }
 
+    // ── Step 1.4b: Food & beverage subtype refinement (userApiKey only) ─────
+    if (formInput.userApiKey && businessProfile.sector === "food_and_beverage") {
+      try {
+        const refinedSubtype = await refineFoodSubtype(
+          effectiveFormInput.businessName ?? inferredName ?? "",
+          websiteAnalysis,
+          llmProvider
+        );
+        if (refinedSubtype) {
+          console.log(`[Pipeline] Food subtype refined: ${businessProfile.subtype} → ${refinedSubtype}`);
+          businessProfile.subtype = refinedSubtype;
+        }
+      } catch (err) {
+        if (isGroqQuotaError(err)) quotaLimitHit = true;
+        console.warn("[Pipeline] Food subtype refinement threw unexpectedly:", err);
+      }
+    }
+
     // ── Step 1.5: LLM signal extraction (non-blocking, best-effort) ────────
     // Supplements the deterministic scraper signals for pattern routing only.
     // Returns null when MOCK_LLM=true or LLM call fails.
@@ -562,6 +585,28 @@ export async function runAnalysisPipeline(
       }
     }
 
+    // ── Step 5b: Competitor comparison notes (userApiKey only) ───────────────
+    if (formInput.userApiKey && competitorAnalyses.length > 0) {
+      try {
+        const comparisons = await compareWithCompetitors(
+          websiteAnalysis,
+          competitorAnalyses,
+          businessProfile,
+          llmProvider
+        );
+        for (const [url, note] of Object.entries(comparisons)) {
+          await supabase
+            .from("report_competitors")
+            .update({ comparison_note: note })
+            .eq("report_id", reportId)
+            .eq("website_url", url);
+        }
+      } catch (err) {
+        if (isGroqQuotaError(err)) quotaLimitHit = true;
+        console.warn("[Pipeline] Competitor comparison threw unexpectedly:", err);
+      }
+    }
+
     // ── Step 6: Profile-aware deterministic scoring ─────────────────────────
     const { scores, findings } = scoreWebsite(
       websiteAnalysis,
@@ -576,6 +621,22 @@ export async function runAnalysisPipeline(
       businessFeatures
     );
     const scoreExplanation: ScoreExplanation = generateScoreExplanation(scores, findings);
+
+    // ── Step 6b: LLM content quality scoring (userApiKey only) ───────────────
+    if (formInput.userApiKey) {
+      try {
+        const qualityFindings = await scoreContentQualityWithLlm(
+          websiteAnalysis,
+          effectiveFormInput.businessName,
+          effectiveFormInput.city,
+          llmProvider
+        );
+        findings.push(...qualityFindings);
+      } catch (err) {
+        if (isGroqQuotaError(err)) quotaLimitHit = true;
+        console.warn("[Pipeline] Content quality scoring threw unexpectedly:", err);
+      }
+    }
 
     // ── Step 7: Profile-aware deterministic FAQs (needed for LLM prompt) ────
     const faqRows = generateFaqs(businessProfile);
@@ -688,7 +749,7 @@ export async function runAnalysisPipeline(
     const evidenceSnapshot = buildEvidenceSnapshot(websiteAnalysis, pagesScanned);
 
     // ── Step 10: Profile-aware query coverage ───────────────────────────────
-    const queryCoverageRows = computeQueryCoverage(
+    let queryCoverageRows = computeQueryCoverage(
       websiteAnalysis,
       businessProfile,
       businessFeatures,
@@ -753,6 +814,20 @@ export async function runAnalysisPipeline(
       );
     }
 
+    // ── Step 10d: Semantic query coverage enhancement (userApiKey only) ────────
+    if (formInput.userApiKey) {
+      try {
+        queryCoverageRows = await enhanceQueryCoverageWithSemantics(
+          queryCoverageRows,
+          websiteAnalysis,
+          llmProvider
+        );
+      } catch (err) {
+        if (isGroqQuotaError(err)) quotaLimitHit = true;
+        console.warn("[Pipeline] Semantic query enhancement threw unexpectedly:", err);
+      }
+    }
+
     // ── Step 11: Signal rows ──────────────────────────────────────────────────
     const signalRows = buildSignalRows(websiteAnalysis, effectiveCity);
 
@@ -795,7 +870,8 @@ export async function runAnalysisPipeline(
           businessNameForSim,
           queryCoverageRows,
           simBusinessType,
-          effectiveCity
+          effectiveCity,
+          llmProvider
         );
         console.log("[DIAG 11b] simulateVisibility result:", visibilitySimResult === null ? "null" : `${visibilitySimResult.rows.length} rows`);
       } else {
@@ -803,6 +879,25 @@ export async function runAnalysisPipeline(
       }
     } catch (err) {
       console.error("[DIAG 11b] Visibility simulation threw unexpectedly:", err);
+    }
+
+    // ── Step 11e: Visibility gap explanations (userApiKey only) ─────────────
+    if (formInput.userApiKey && visibilitySimResult) {
+      try {
+        const gapExplanations = await explainVisibilityGaps(
+          visibilitySimResult.result,
+          visibilitySimResult.rows,
+          websiteAnalysis,
+          businessProfile,
+          llmProvider
+        );
+        if (Object.keys(gapExplanations).length > 0) {
+          visibilitySimResult.result.gapExplanations = gapExplanations;
+        }
+      } catch (err) {
+        if (isGroqQuotaError(err)) quotaLimitHit = true;
+        console.warn("[Pipeline] Visibility explanation threw unexpectedly:", err);
+      }
     }
 
     // ── Step 12: Persist to Supabase ─────────────────────────────────────────
@@ -1002,6 +1097,9 @@ export async function runAnalysisPipeline(
           query: r.query,
           mentioned_companies: r.mentionedCompanies,
           analyzed_business_appears: r.analyzedBusinessAppears,
+          simulated_response: r.simulatedResponse ?? null,
+          appearance_type: r.appearanceType ?? null,
+          query_coverage_quality: r.queryCoverageQuality ?? null,
         }))
       );
       if (visInsertError) {

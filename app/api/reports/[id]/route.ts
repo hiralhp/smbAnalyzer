@@ -264,7 +264,7 @@ export async function GET(
     // LLM competitor analysis (per-query visibility simulation rows)
     const { data: visRows, error: visError } = await supabase
       .from("report_visibility_simulation")
-      .select("query, mentioned_companies, analyzed_business_appears")
+      .select("query, mentioned_companies, analyzed_business_appears, simulated_response, appearance_type, query_coverage_quality")
       .eq("report_id", id)
       .order("created_at");
 
@@ -272,7 +272,8 @@ export async function GET(
 
     if (visRows?.length) {
       report.llmCompetitorAnalysis = visRows.map(
-        (r): LlmCompetitorAnalysisRow => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (r: any): LlmCompetitorAnalysisRow => ({
           query: r.query,
           competitors: (r.mentioned_companies as Array<{
             name: string;
@@ -280,6 +281,9 @@ export async function GET(
             confidence: "high" | "medium" | "low";
           }>) ?? [],
           targetBusinessLikelyToAppear: r.analyzed_business_appears ?? false,
+          simulatedResponse: r.simulated_response ?? undefined,
+          appearanceType: (r.appearance_type as "primary" | "secondary" | "absent") ?? undefined,
+          queryCoverageQuality: (r.query_coverage_quality as "strong" | "partial" | "weak") ?? undefined,
         })
       );
     }
@@ -287,7 +291,7 @@ export async function GET(
     // Discovered competitors — fallback for rendering when simulation is unavailable
     const { data: discoveredRows } = await supabase
       .from("report_competitors")
-      .select("name, website_url, source")
+      .select("name, website_url, source, comparison_note")
       .eq("report_id", id)
       .order("created_at");
 
@@ -296,6 +300,7 @@ export async function GET(
         name: r.name,
         websiteUrl: r.website_url ?? undefined,
         source: r.source as "user_provided" | "auto_discovered" | "mock",
+        comparisonNote: (r as Record<string, unknown>).comparison_note as string | undefined,
       }));
     }
 

@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { cn } from "@/lib/utils";
 
 const CATEGORIES = [
   "HVAC / Home Services",
@@ -29,27 +28,20 @@ const CATEGORIES = [
 ];
 
 interface FormState {
-  businessName: string;
   websiteUrl: string;
   category: string;
-  city: string;
-  competitorUrls: string;
   userApiKey: string;
 }
 
 export function ReportForm() {
   const router = useRouter();
   const [form, setForm] = useState<FormState>({
-    businessName: "",
     websiteUrl: "",
     category: "",
-    city: "",
-    competitorUrls: "",
     userApiKey: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showOptional, setShowOptional] = useState(false);
   const [quotaWarning, setQuotaWarning] = useState<{ reportId: string } | null>(null);
 
   const handleChange = (
@@ -60,32 +52,22 @@ export function ReportForm() {
   };
 
   const hasUrl = form.websiteUrl.trim().length > 0;
-  const hasNameAndCity =
-    form.businessName.trim().length > 0 && form.city.trim().length > 0;
-  const canSubmit = hasUrl || hasNameAndCity;
+  const canSubmit = hasUrl;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
     if (!canSubmit) {
-      setError(
-        "Enter a website URL, or provide both a business name and city."
-      );
+      setError("Enter a website URL to analyze.");
       return;
     }
 
     setSubmitting(true);
 
     const payload = {
-      businessName: form.businessName.trim() || undefined,
       websiteUrl: form.websiteUrl.trim() || undefined,
       category: form.category || undefined,
-      city: form.city.trim() || undefined,
-      competitorUrls: form.competitorUrls
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean),
       userApiKey: form.userApiKey.trim() || undefined,
     };
 
@@ -108,7 +90,6 @@ export function ReportForm() {
 
       if (needsPersonalGroqKey) {
         setQuotaWarning({ reportId });
-        setShowOptional(true);
         setSubmitting(false);
         return;
       }
@@ -146,39 +127,6 @@ export function ReportForm() {
           </p>
         </div>
 
-        {/* OR divider */}
-        <div className="flex items-center gap-3">
-          <div className="flex-1 h-px bg-slate-200" />
-          <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">or</span>
-          <div className="flex-1 h-px bg-slate-200" />
-        </div>
-
-        {/* Option 2: Name + City */}
-        <div>
-          <p className="text-sm font-medium text-slate-700 mb-2">
-            Business name &amp; city <span className="text-red-500">*</span>
-            <span className="text-slate-400 font-normal ml-1">(if no website)</span>
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <input
-              type="text"
-              name="businessName"
-              value={form.businessName}
-              onChange={handleChange}
-              placeholder="e.g. Blue Ridge HVAC"
-              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400"
-            />
-            <input
-              type="text"
-              name="city"
-              value={form.city}
-              onChange={handleChange}
-              placeholder="e.g. Denver, CO"
-              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400"
-            />
-          </div>
-        </div>
-
         {/* Category — optional */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1.5">
@@ -204,87 +152,64 @@ export function ReportForm() {
         </div>
       </div>
 
-      {/* Optional: Competitors */}
+      {/* Optional: Competitors — coming soon */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-        <button
-          type="button"
-          className="flex items-center justify-between w-full"
-          onClick={() => setShowOptional(!showOptional)}
-        >
+        <div className="flex items-center justify-between">
           <div>
-            <h2 className="font-semibold text-slate-900 text-sm uppercase tracking-wider text-left">
+            <h2 className="font-semibold text-slate-900 text-sm uppercase tracking-wider">
               Competitor analysis{" "}
               <span className="text-slate-400 font-normal normal-case tracking-normal">
                 — optional
               </span>
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5 text-left">
-              Compare your site against competitors
+            <p className="text-xs text-slate-400 mt-0.5">
+              Analyze your site against specific competitors
             </p>
           </div>
-          <svg
-            className={cn(
-              "w-4 h-4 text-slate-400 transition-transform flex-shrink-0",
-              showOptional ? "rotate-180" : ""
-            )}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M19 9l-7 7-7-7"
-            />
-          </svg>
-        </button>
+          <span className="text-xs font-medium text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
+            Coming soon
+          </span>
+        </div>
+      </div>
 
-        {showOptional && (
-          <div className="mt-5 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                Competitor URLs
-              </label>
-              <textarea
-                name="competitorUrls"
-                value={form.competitorUrls}
-                onChange={handleChange}
-                placeholder={"https://competitor1.com\nhttps://competitor2.com"}
-                rows={3}
-                className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400 resize-none font-mono text-xs"
-              />
-              <p className="text-xs text-slate-400 mt-1">One URL per line. Names are extracted automatically.</p>
-            </div>
-
-            <div className="border-t border-slate-100 pt-4">
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                Your Groq API key{" "}
-                <span className="text-slate-400 font-normal">(if the free tier is busy)</span>
-              </label>
-              <input
-                type="password"
-                name="userApiKey"
-                value={form.userApiKey}
-                onChange={handleChange}
-                placeholder="gsk_..."
-                autoComplete="off"
-                className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400 font-mono"
-              />
-              <p className="text-xs text-slate-400 mt-1">
-                Used only for this request and never stored.{" "}
-                <a
-                  href="https://console.groq.com/keys"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline hover:text-slate-600"
-                >
-                  Get a free key at console.groq.com
-                </a>
-              </p>
-            </div>
+      {/* Enhance with AI — Groq API key */}
+      <div className="bg-violet-50 border border-violet-200 rounded-2xl p-5 space-y-3">
+        <div className="flex items-start gap-3">
+          <div className="w-7 h-7 rounded-lg bg-violet-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
           </div>
-        )}
+          <div>
+            <h2 className="font-semibold text-violet-900 text-sm">AI-powered insights</h2>
+            <p className="text-xs text-violet-700 mt-0.5 leading-relaxed">
+              If AI insights are unavailable, it&apos;s because the shared free tier has hit its daily limit. You can bring your own free Groq key to guarantee access — it only takes a minute to get one.
+            </p>
+          </div>
+        </div>
+        <div>
+          <input
+            type="password"
+            name="userApiKey"
+            value={form.userApiKey}
+            onChange={handleChange}
+            placeholder="gsk_..."
+            autoComplete="off"
+            className="w-full border border-violet-300 bg-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent placeholder:text-slate-400 font-mono"
+          />
+          <p className="text-xs text-violet-600 mt-1">
+            Used only for this request, never stored.{" "}
+            <a
+              href="https://console.groq.com/keys"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline font-medium hover:text-violet-800"
+            >
+              Get a free key at console.groq.com
+            </a>
+          </p>
+        </div>
       </div>
 
       {quotaWarning && (
@@ -325,12 +250,11 @@ export function ReportForm() {
       <button
         type="submit"
         disabled={submitting || !canSubmit}
-        className={cn(
-          "w-full flex items-center justify-center gap-2 py-4 px-6 rounded-xl font-semibold text-base transition-colors",
+        className={`w-full flex items-center justify-center gap-2 py-4 px-6 rounded-xl font-semibold text-base transition-colors ${
           submitting || !canSubmit
             ? "bg-brand-400 cursor-not-allowed text-white"
             : "bg-brand-600 hover:bg-brand-700 text-white shadow-sm"
-        )}
+        }`}
       >
         {submitting ? (
           <>
@@ -376,7 +300,7 @@ export function ReportForm() {
       </button>
 
       <p className="text-center text-xs text-slate-400">
-        Analysis takes about 30–60 seconds. No account required.
+        Analysis takes 30–60 seconds. No account required.
       </p>
     </form>
   );

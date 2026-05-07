@@ -220,6 +220,8 @@ export interface CompetitorRecord {
   websiteUrl?: string;
   source: "user_provided" | "auto_discovered" | "mock";
   discoveryScore?: number;
+  /** LLM-generated one-sentence comparison vs. analyzed business (userApiKey only) */
+  comparisonNote?: string;
 }
 
 // ── Business features (inferred, feature-led layer) ──────────────────────────
@@ -495,12 +497,20 @@ export interface VisibilitySimulationResult {
   analyzedBusinessAppears: boolean;
   topMentions: VisibilityMention[];
   queriesSimulated: number;
+  /** Per-query explanations for queries where the business didn't appear (userApiKey only) */
+  gapExplanations?: Record<string, string>;
 }
 
 export interface VisibilitySimulationRow {
   query: string;
   mentionedCompanies: Array<{ name: string; reason: string; confidence: "high" | "medium" | "low" }>;
   analyzedBusinessAppears: boolean;
+  /** Simulated natural-language AI assistant response for this query */
+  simulatedResponse?: string;
+  /** How prominently the target business appeared in the simulated response */
+  appearanceType?: "primary" | "secondary" | "absent";
+  /** Richness of the target's mention — based on detail level, not keywords */
+  queryCoverageQuality?: "strong" | "partial" | "weak";
 }
 
 // ── LLM competitor analysis (per-query, for UI rendering) ─────────────────────
@@ -511,6 +521,12 @@ export interface LlmCompetitorAnalysisRow {
   query: string;
   competitors: Array<{ name: string; reason: string; confidence: "high" | "medium" | "low" }>;
   targetBusinessLikelyToAppear: boolean;
+  /** Simulated natural-language AI assistant response for this query */
+  simulatedResponse?: string;
+  /** How prominently the target business appeared in the simulated response */
+  appearanceType?: "primary" | "secondary" | "absent";
+  /** Richness of the target's mention — based on detail level, not keywords */
+  queryCoverageQuality?: "strong" | "partial" | "weak";
 }
 
 // ── LLM provider abstraction ──────────────────────────────────────────────────

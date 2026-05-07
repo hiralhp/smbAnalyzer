@@ -166,3 +166,75 @@ export async function classifyWithGroq(
     return null;
   }
 }
+
+const VALID_FOOD_SUBTYPES = new Set([
+  "restaurant", "bakery", "cafe", "bar", "food_truck", "catering", "brewery",
+  "fast_food", "pizza", "sushi", "deli", "ice_cream",
+]);
+
+/**
+ * Secondary LLM pass specifically for food_and_beverage subtype disambiguation.
+ * Fixes the known bakery-vs-restaurant misclassification caused by overlapping keywords.
+ * Only called when userApiKey is set and sector is food_and_beverage.
+ */
+export async function refineFoodSubtype(
+  businessName: string,
+  analysis: WebsiteAnalysis,
+  providerOverride?: LlmProvider
+): Promise<string | null> {
+  if (process.env.MOCK_LLM === "true") return null;
+  const provider = providerOverride ?? getLlmProvider();
+
+  const content = [
+    analysis.title,
+    ...(analysis.h1Headings ?? []),
+    analysis.metaDescription,
+    analysis.bodyTextSample?.slice(0, 600),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  if (!content.trim()) return null;
+
+  let raw: string;
+  try {
+    raw = await provider.complete({
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a business category classifier. Respond ONLY with a JSON object containing a single 'subtype' field.",
+        },
+        {
+          role: "user",
+          content: `Business name: "${businessName}"
+Website content:
+"""
+${content}
+"""
+
+What type of food & beverage business is this? Choose the single best subtype from:
+restaurant, bakery, cafe, bar, food_truck, catering, brewery, fast_food, pizza, sushi, deli, ice_cream
+
+Return: { "subtype": "<your choice>" }`,
+        },
+      ],
+      maxTokens: 30,
+      temperature: 0,
+      jsonMode: true,
+    });
+  } catch (err) {
+    if (isGroqQuotaError(err)) throw err;
+    console.warn("[groq-classifier] refineFoodSubtype LLM call failed:", err);
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const subtype = typeof parsed.subtype === "string" ? parsed.subtype.trim().toLowerCase() : null;
+    if (subtype && VALID_FOOD_SUBTYPES.has(subtype)) return subtype;
+    return null;
+  } catch {
+    return null;
+  }
+}
