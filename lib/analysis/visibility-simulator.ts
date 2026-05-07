@@ -26,7 +26,7 @@ import { getLlmProvider } from "@/lib/llm";
 import { buildVisibilityQueryGenPrompt } from "@/lib/prompts/visibility-query-gen";
 import { buildAiResponseSimulationPrompt } from "@/lib/prompts/ai-response-simulator";
 
-const MAX_QUERIES = 3;
+const MAX_QUERIES = 6;
 const CONFIDENCE_RANK = { high: 3, medium: 2, low: 1 } as const;
 type Confidence = "high" | "medium" | "low";
 type AppearanceType = "primary" | "secondary" | "absent";

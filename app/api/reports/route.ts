@@ -9,7 +9,7 @@ import { createClient } from "@/lib/supabase/server";
 import { runAnalysisPipeline } from "@/lib/analysis/pipeline";
 import type { ReportFormInput } from "@/lib/types";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   let formInput: ReportFormInput;
@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
   // A 55s hard timeout marks the report as failed before Vercel cuts the process,
   // so the client never gets stuck polling a permanently-running report.
   const reportId = report.id;
-  const PIPELINE_TIMEOUT_MS = 55_000;
+  const PIPELINE_TIMEOUT_MS = 270_000; // 270s — just under maxDuration
 
   waitUntil(
     Promise.race([

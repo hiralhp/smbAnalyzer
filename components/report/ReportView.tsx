@@ -12,7 +12,7 @@ interface ReportViewProps {
 }
 
 const POLL_INTERVAL_MS = 3000;
-const MAX_POLLS = 40; // 2 minutes max
+const MAX_POLLS = 100; // 5 minutes max
 
 export function ReportView({ reportId }: ReportViewProps) {
   const [report, setReport] = useState<Report | null>(null);
