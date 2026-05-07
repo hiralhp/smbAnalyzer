@@ -115,11 +115,33 @@ export async function POST(request: NextRequest) {
   // 4. Run pipeline in the background — respond immediately so the client can
   // navigate to the report page and poll for status. waitUntil keeps the
   // function alive for the full maxDuration after the response is sent.
+  // A 55s hard timeout marks the report as failed before Vercel cuts the process,
+  // so the client never gets stuck polling a permanently-running report.
   const reportId = report.id;
+  const PIPELINE_TIMEOUT_MS = 55_000;
+
   waitUntil(
-    runAnalysisPipeline(reportId, formInput, inputMode).catch((err) => {
-      console.error("[POST /api/reports] Pipeline error for", reportId, err);
-    })
+    Promise.race([
+      runAnalysisPipeline(reportId, formInput, inputMode).catch((err) => {
+        console.error("[POST /api/reports] Pipeline error for", reportId, err);
+      }),
+      new Promise<void>((resolve) =>
+        setTimeout(async () => {
+          console.warn("[POST /api/reports] Pipeline timeout for", reportId);
+          const sb = createClient();
+          await sb
+            .from("reports")
+            .update({
+              status: "failed",
+              error_message: "Analysis timed out — please try again.",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", reportId)
+            .eq("status", "running"); // only overwrite if still in-progress
+          resolve();
+        }, PIPELINE_TIMEOUT_MS)
+      ),
+    ])
   );
 
   return NextResponse.json({ reportId }, { status: 201 });
