@@ -13,12 +13,12 @@
 import { scrapeWebsite } from "@/lib/analysis/scraper";
 import type { WebsiteAnalysis } from "@/lib/types";
 
-const SUB_PAGE_TIMEOUT_MS = 5_000;
-const MAX_SUB_PAGES = 6;
+const SUB_PAGE_TIMEOUT_MS = 8_000;
+const MAX_SUB_PAGES = 20;
 const BODY_TEXT_APPEND_CHARS = 500;
-const BODY_TEXT_CAP_CHARS = 4_000;
+const BODY_TEXT_CAP_CHARS = 8_000;
 
-// Path scoring: higher score = more likely to contain useful evidence
+// Path scoring: higher score = fetched first; score 0 links still included
 function scoreLink(url: string): number {
   const path = (() => {
     try {
@@ -28,13 +28,16 @@ function scoreLink(url: string): number {
     }
   })();
 
-  if (/\/(services?|solutions?|offerings?|work|what-we-do)\b/.test(path)) return 2;
-  if (/\/(faq|questions?|help|support)\b/.test(path)) return 2;
-  if (/\/about\b/.test(path)) return 2;
+  if (/\/(services?|solutions?|offerings?|treatments?|work|what-we-do)\b/.test(path)) return 3;
+  if (/\/(faq|questions?|help|support)\b/.test(path)) return 3;
+  if (/\/about\b/.test(path)) return 3;
   if (/\/contact\b/.test(path)) return 2;
-  if (/\/pric(ing|e)\b/.test(path)) return 1;
-  if (/\/reviews?\b/.test(path)) return 1;
-  return 0;
+  if (/\/pric(ing|e)\b/.test(path)) return 2;
+  if (/\/reviews?\b/.test(path)) return 2;
+  if (/\/(team|staff|doctors?|providers?|specialists?)\b/.test(path)) return 2;
+  if (/\/(gallery|portfolio|before-after|results)\b/.test(path)) return 1;
+  if (/\/(blog|news|resources?|articles?)\b/.test(path)) return 0;
+  return 1; // include all other internal pages by default
 }
 
 function timeoutAfter(ms: number): Promise<never> {
@@ -55,9 +58,9 @@ function timeoutAfter(ms: number): Promise<never> {
 export async function crawlSiteForEvidence(
   homepage: WebsiteAnalysis
 ): Promise<{ merged: WebsiteAnalysis; pagesScanned: number }> {
-  // Score and pick top sub-pages
+  // Score all internal links, sort by priority, take up to MAX_SUB_PAGES
+  // Blog/news/article pages score lowest but are still included if slots remain
   const candidates = homepage.internalLinks
-    .filter((link) => scoreLink(link) > 0)
     .map((link) => ({ link, score: scoreLink(link) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_SUB_PAGES)
