@@ -15,10 +15,12 @@ interface OpenAIConfig {
   maxTokens: number;
 }
 
+const MAX_RETRIES = 3;
+
 export class OpenAICompatibleProvider implements LlmProvider {
   constructor(private config: OpenAIConfig) {}
 
-  async complete(options: LlmCallOptions): Promise<string> {
+  async complete(options: LlmCallOptions, retries = 0): Promise<string> {
     const { messages, maxTokens, temperature = 0.3, jsonMode } = options;
 
     const body: Record<string, unknown> = {
@@ -55,12 +57,32 @@ export class OpenAICompatibleProvider implements LlmProvider {
     }
 
     if (!response.ok) {
-      const body = await response.text();
-      // 429 = rate limit; 402 = quota/billing limit — treat both as recoverable
-      if (response.status === 429 || response.status === 402) {
-        throw new GroqQuotaError(response.status, body);
+      const bodyText = await response.text();
+
+      if (response.status === 429) {
+        // Distinguish TPM/RPM rate limit (retry-able) from quota exhaustion (failover)
+        let parsed: Record<string, unknown> = {};
+        try { parsed = JSON.parse(bodyText); } catch { /* ignore */ }
+        const code = (parsed?.error as Record<string, unknown>)?.code as string | undefined;
+        const isRateLimit = code === "rate_limit_exceeded";
+
+        if (isRateLimit && retries < MAX_RETRIES) {
+          // Extract suggested wait time from the error message, default to 7s
+          const match = bodyText.match(/try again in ([\d.]+)s/i);
+          const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) + 500 : 7_000;
+          console.warn(`[OpenAI-compatible] TPM rate limit — retrying in ${waitMs}ms (attempt ${retries + 1}/${MAX_RETRIES})`);
+          await new Promise((r) => setTimeout(r, waitMs));
+          return this.complete(options, retries + 1);
+        }
+
+        throw new GroqQuotaError(response.status, bodyText);
       }
-      throw new Error(`[OpenAI-compatible] HTTP ${response.status}: ${body}`);
+
+      if (response.status === 402) {
+        throw new GroqQuotaError(response.status, bodyText);
+      }
+
+      throw new Error(`[OpenAI-compatible] HTTP ${response.status}: ${bodyText}`);
     }
 
     const data = (await response.json()) as {

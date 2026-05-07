@@ -206,27 +206,33 @@ export async function simulateVisibility(
 
   console.log("[DIAG Sim] Running", queries.length, "simulations for:", businessName, "| type:", businessType, "| location:", location);
 
-  // ── Step 2: Simulate AI responses in parallel ──────────────────────────────
-  const simResults = await Promise.allSettled(
-    queries.map(async (query) => {
-      const { system, user } = buildAiResponseSimulationPrompt({
-        query,
-        businessName,
-        businessType: businessType ?? "local business",
-        location: location || "the local area",
-      });
-      const raw = await provider.complete({
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        maxTokens: 600,
-        temperature: 0.3,
-        jsonMode: true,
-      });
-      return parseSimulationResponse(raw, businessName, query);
-    })
-  );
+  // ── Step 2: Simulate AI responses sequentially to stay within TPM limits ───
+  const simResults: PromiseSettledResult<ParsedSimResult>[] = [];
+  for (const query of queries) {
+    const result = await (async (): Promise<PromiseSettledResult<ParsedSimResult>> => {
+      try {
+        const { system, user } = buildAiResponseSimulationPrompt({
+          query,
+          businessName,
+          businessType: businessType ?? "local business",
+          location: location || "the local area",
+        });
+        const raw = await provider.complete({
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          maxTokens: 600,
+          temperature: 0.3,
+          jsonMode: true,
+        });
+        return { status: "fulfilled", value: parseSimulationResponse(raw, businessName, query) };
+      } catch (err) {
+        return { status: "rejected", reason: err };
+      }
+    })();
+    simResults.push(result);
+  }
 
   const failures = simResults.filter((r) => r.status === "rejected");
   if (failures.length > 0) {
