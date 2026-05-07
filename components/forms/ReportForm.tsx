@@ -42,13 +42,11 @@ export function ReportForm() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [quotaWarning, setQuotaWarning] = useState<{ reportId: string } | null>(null);
-
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
-    if (e.target.name === "userApiKey") setQuotaWarning(null);
+
   };
 
   const hasUrl = form.websiteUrl.trim().length > 0;
@@ -83,16 +81,7 @@ export function ReportForm() {
         throw new Error(data.error ?? "Failed to create report.");
       }
 
-      const { reportId, needsPersonalGroqKey } = (await res.json()) as {
-        reportId: string;
-        needsPersonalGroqKey?: boolean;
-      };
-
-      if (needsPersonalGroqKey) {
-        setQuotaWarning({ reportId });
-        setSubmitting(false);
-        return;
-      }
+      const { reportId } = (await res.json()) as { reportId: string };
 
       router.push(`/report/${reportId}`);
     } catch (err) {
@@ -211,35 +200,6 @@ export function ReportForm() {
           </p>
         </div>
       </div>
-
-      {quotaWarning && (
-        <div className="bg-amber-50 border border-amber-300 rounded-xl px-5 py-4 space-y-2">
-          <p className="text-sm font-semibold text-amber-900">
-            Shared API limit reached
-          </p>
-          <p className="text-sm text-amber-800 leading-relaxed">
-            Due to high traffic, the shared Groq key hit its free-tier limit. Your report was still generated using our deterministic analysis — but the AI-written summary and enhancements were skipped.
-          </p>
-          <p className="text-sm text-amber-800 leading-relaxed">
-            To get the full AI-enhanced report, add your own free Groq API key below and re-submit. It takes about 30 seconds to{" "}
-            <a
-              href="https://console.groq.com/keys"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline font-medium hover:text-amber-900"
-            >
-              create one at console.groq.com
-            </a>
-            .
-          </p>
-          <a
-            href={`/report/${quotaWarning.reportId}`}
-            className="inline-block text-xs text-amber-700 underline hover:text-amber-900 mt-1"
-          >
-            View your report anyway (AI features limited)
-          </a>
-        </div>
-      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">

@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { createClient } from "@/lib/supabase/server";
 import { runAnalysisPipeline } from "@/lib/analysis/pipeline";
 import type { ReportFormInput } from "@/lib/types";
@@ -111,17 +112,15 @@ export async function POST(request: NextRequest) {
     competitor_names: formInput.competitorNames?.filter(Boolean) || null,
   });
 
-  // 4. Run pipeline synchronously — await it so the report is complete before
-  // the client navigates to the report page. Errors are caught inside the
-  // pipeline and stored in the DB as status="failed".
+  // 4. Run pipeline in the background — respond immediately so the client can
+  // navigate to the report page and poll for status. waitUntil keeps the
+  // function alive for the full maxDuration after the response is sent.
   const reportId = report.id;
-  let needsPersonalGroqKey = false;
-  try {
-    const result = await runAnalysisPipeline(reportId, formInput, inputMode);
-    needsPersonalGroqKey = result.quotaLimitHit === true && !formInput.userApiKey;
-  } catch (err) {
-    console.error("[POST /api/reports] Pipeline error for", reportId, err);
-  }
+  waitUntil(
+    runAnalysisPipeline(reportId, formInput, inputMode).catch((err) => {
+      console.error("[POST /api/reports] Pipeline error for", reportId, err);
+    })
+  );
 
-  return NextResponse.json({ reportId, needsPersonalGroqKey }, { status: 201 });
+  return NextResponse.json({ reportId }, { status: 201 });
 }
