@@ -31,6 +31,8 @@ const SEO_STRUCTURAL = /\bh1\b|\bh2\b|heading count|meta description|page title|
 export function ReportComplete({ report }: ReportCompleteProps) {
   const { business, scores, scoreExplanation, findings, recommendations, llmOutput, websiteSignals, competitorSignals, queryCoverage, llmCompetitorAnalysis, discoveredCompetitors, pagesScanned } = report;
 
+  const hasVisibilityData = (llmCompetitorAnalysis?.length ?? 0) > 0;
+
   const gaps = findings?.filter((f) => f.type === "gap") ?? [];
   const aiGaps = gaps.filter((g) => !SEO_STRUCTURAL.test(g.label)).slice(0, 4);
 
@@ -125,13 +127,15 @@ export function ReportComplete({ report }: ReportCompleteProps) {
           {/* Left column — wide */}
           <div className="lg:col-span-2 space-y-8">
 
-            {/* PRIMARY: AI Competitor Visibility */}
-            <LlmCompetitorSection
-              rows={llmCompetitorAnalysis ?? []}
-              businessName={business.name}
-              discoveredCompetitors={discoveredCompetitors}
-              gapExplanations={report.visibilitySimulation?.gapExplanations}
-            />
+            {/* AI Competitor Visibility — top when data is available */}
+            {hasVisibilityData && (
+              <LlmCompetitorSection
+                rows={llmCompetitorAnalysis ?? []}
+                businessName={business.name}
+                discoveredCompetitors={discoveredCompetitors}
+                gapExplanations={report.visibilitySimulation?.gapExplanations}
+              />
+            )}
 
             {/* Query coverage */}
             {queryCoverage && queryCoverage.length > 0 && (
@@ -220,6 +224,16 @@ export function ReportComplete({ report }: ReportCompleteProps) {
                   ))}
                 </div>
               </div>
+            )}
+
+            {/* AI Competitor Visibility — bottom when unavailable */}
+            {!hasVisibilityData && (
+              <LlmCompetitorSection
+                rows={[]}
+                businessName={business.name}
+                discoveredCompetitors={discoveredCompetitors}
+                gapExplanations={report.visibilitySimulation?.gapExplanations}
+              />
             )}
 
             {/* Content Asset */}
