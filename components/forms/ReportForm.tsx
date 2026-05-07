@@ -195,7 +195,7 @@ export function ReportForm() {
             value={form.userApiKey}
             onChange={handleChange}
             placeholder="gsk_..."
-            autoComplete="off"
+            autoComplete="new-password"
             className="w-full border border-violet-300 bg-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent placeholder:text-slate-400 font-mono"
           />
           <p className="text-xs text-violet-600 mt-1">
