@@ -8,6 +8,8 @@ import { createClient } from "@/lib/supabase/server";
 import { runAnalysisPipeline } from "@/lib/analysis/pipeline";
 import type { ReportFormInput } from "@/lib/types";
 
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   let formInput: ReportFormInput;
 
