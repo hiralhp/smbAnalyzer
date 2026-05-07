@@ -10,20 +10,53 @@
 //   "anthropic" — Anthropic Claude API
 //
 // Relevant env vars:
-//   LLM_PROVIDER   — "openai" | "anthropic"
-//   LLM_API_KEY    — API key for the chosen provider
-//   LLM_BASE_URL   — Override base URL (e.g. Groq: https://api.groq.com/openai/v1)
-//   LLM_MODEL      — Model name (e.g. llama3-8b-8192, gpt-4o-mini, claude-haiku...)
-//   LLM_MAX_TOKENS — Default max tokens (defaults to 2048)
-//   MOCK_LLM       — "true" to skip real calls and return mock data
+//   LLM_PROVIDER       — "openai" | "anthropic"
+//   LLM_API_KEY        — Primary API key
+//   LLM_API_KEY_BACKUP — Fallback key used automatically when primary hits quota
+//   LLM_BASE_URL       — Override base URL (e.g. Groq: https://api.groq.com/openai/v1)
+//   LLM_MODEL          — Model name (e.g. llama3-8b-8192, gpt-4o-mini, claude-haiku...)
+//   LLM_MAX_TOKENS     — Default max tokens (defaults to 2048)
+//   MOCK_LLM           — "true" to skip real calls and return mock data
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { LlmProvider } from "@/lib/types";
+import type { LlmCallOptions, LlmProvider } from "@/lib/types";
 import { OpenAICompatibleProvider } from "./openai-compatible";
 import { AnthropicProvider } from "./anthropic";
 import { MockProvider } from "./mock";
+import { isGroqQuotaError } from "@/lib/errors";
+
+/**
+ * Wraps two providers: tries primary first, falls back to backup on quota errors.
+ */
+class FailoverProvider implements LlmProvider {
+  constructor(
+    private primary: LlmProvider,
+    private backup: LlmProvider
+  ) {}
+
+  async complete(options: LlmCallOptions): Promise<string> {
+    try {
+      return await this.primary.complete(options);
+    } catch (err) {
+      if (isGroqQuotaError(err)) {
+        console.warn("[LLM] Primary key quota exceeded — retrying with backup key");
+        return await this.backup.complete(options);
+      }
+      throw err;
+    }
+  }
+}
 
 let _provider: LlmProvider | null = null;
+
+function buildOpenAIProvider(apiKey: string): OpenAICompatibleProvider {
+  return new OpenAICompatibleProvider({
+    apiKey,
+    baseUrl: process.env.LLM_BASE_URL ?? "https://api.openai.com/v1",
+    model: process.env.LLM_MODEL ?? "gpt-4o-mini",
+    maxTokens: parseInt(process.env.LLM_MAX_TOKENS ?? "2048", 10),
+  });
+}
 
 export function getLlmProvider(): LlmProvider {
   if (_provider) return _provider;
@@ -35,16 +68,16 @@ export function getLlmProvider(): LlmProvider {
   }
 
   const providerName = (process.env.LLM_PROVIDER ?? "openai").toLowerCase();
+  const backupKey = process.env.LLM_API_KEY_BACKUP;
 
   switch (providerName) {
-    case "openai":
-      _provider = new OpenAICompatibleProvider({
-        apiKey: process.env.LLM_API_KEY ?? "",
-        baseUrl: process.env.LLM_BASE_URL ?? "https://api.openai.com/v1",
-        model: process.env.LLM_MODEL ?? "gpt-4o-mini",
-        maxTokens: parseInt(process.env.LLM_MAX_TOKENS ?? "2048", 10),
-      });
+    case "openai": {
+      const primary = buildOpenAIProvider(process.env.LLM_API_KEY ?? "");
+      _provider = backupKey
+        ? new FailoverProvider(primary, buildOpenAIProvider(backupKey))
+        : primary;
       break;
+    }
 
     case "anthropic":
       _provider = new AnthropicProvider({
