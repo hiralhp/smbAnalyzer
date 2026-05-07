@@ -26,24 +26,26 @@ import { MockProvider } from "./mock";
 import { isGroqQuotaError } from "@/lib/errors";
 
 /**
- * Wraps two providers: tries primary first, falls back to backup on quota errors.
+ * Tries each provider in order, moving to the next on quota errors.
  */
 class FailoverProvider implements LlmProvider {
-  constructor(
-    private primary: LlmProvider,
-    private backup: LlmProvider
-  ) {}
+  constructor(private providers: LlmProvider[]) {}
 
   async complete(options: LlmCallOptions): Promise<string> {
-    try {
-      return await this.primary.complete(options);
-    } catch (err) {
-      if (isGroqQuotaError(err)) {
-        console.warn("[LLM] Primary key quota exceeded — retrying with backup key");
-        return await this.backup.complete(options);
+    let lastErr: unknown;
+    for (let i = 0; i < this.providers.length; i++) {
+      try {
+        return await this.providers[i].complete(options);
+      } catch (err) {
+        if (isGroqQuotaError(err)) {
+          console.warn(`[LLM] Key ${i + 1}/${this.providers.length} quota exceeded — trying next`);
+          lastErr = err;
+          continue;
+        }
+        throw err;
       }
-      throw err;
     }
+    throw lastErr;
   }
 }
 
@@ -68,14 +70,16 @@ export function getLlmProvider(): LlmProvider {
   }
 
   const providerName = (process.env.LLM_PROVIDER ?? "openai").toLowerCase();
-  const backupKey = process.env.LLM_API_KEY_BACKUP;
 
   switch (providerName) {
     case "openai": {
-      const primary = buildOpenAIProvider(process.env.LLM_API_KEY ?? "");
-      _provider = backupKey
-        ? new FailoverProvider(primary, buildOpenAIProvider(backupKey))
-        : primary;
+      const keys = [
+        process.env.LLM_API_KEY,
+        process.env.LLM_API_KEY_BACKUP,
+        process.env.LLM_API_KEY_BACKUP_2,
+      ].filter((k): k is string => !!k);
+      const providers = keys.map(buildOpenAIProvider);
+      _provider = providers.length > 1 ? new FailoverProvider(providers) : providers[0];
       break;
     }
 
