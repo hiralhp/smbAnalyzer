@@ -26,11 +26,11 @@ export function buildGroqClassificationPrompt(ctx: GroqClassificationContext): {
   const system = `You are a business category classifier. Given a business name and optional website signals, identify the most specific business category. Output valid JSON only — no markdown, no commentary.`;
 
   const signalLines: string[] = [];
+  if (ctx.formCategory) signalLines.push(`- User-selected category (TREAT AS DEFINITIVE unless clearly wrong): "${ctx.formCategory}"`);
   if (ctx.pageTitle) signalLines.push(`- Page title: "${ctx.pageTitle}"`);
-  if (ctx.metaDescription) signalLines.push(`- Meta description: "${ctx.metaDescription.slice(0, 150)}"`);
+  if (ctx.metaDescription) signalLines.push(`- Meta description: "${ctx.metaDescription.slice(0, 200)}"`);
   if (ctx.h1Headings.length > 0) signalLines.push(`- H1: "${ctx.h1Headings[0]}"`);
-  if (ctx.bodyTextSample) signalLines.push(`- Body excerpt: "${ctx.bodyTextSample.slice(0, 300)}"`);
-  if (ctx.formCategory) signalLines.push(`- User-selected category: "${ctx.formCategory}"`);
+  if (ctx.bodyTextSample) signalLines.push(`- Body excerpt: "${ctx.bodyTextSample.slice(0, 600)}"`);
   if (ctx.city) signalLines.push(`- City: ${ctx.city}`);
 
   const signals = signalLines.length > 0
@@ -50,13 +50,15 @@ Identify:
 5. reasoning — one sentence explaining the classification
 
 STRICT RULES:
+- If user-selected category is provided, use it as the primary signal. Override it only if the website content makes it absolutely impossible (e.g. user says "coffee shop" but site is clearly a law firm with no food mentions).
 - Business name contains "Hotel", "Inn", "Resort", "Motel", "Lodge", "Suites", "B&B" → sector MUST be "hospitality"
 - Business name contains "Restaurant", "Bistro", "Kitchen", "Grill", "Pizzeria", "Sushi", "Ramen", "Tacos" → sector MUST be "food_and_beverage"
 - Business name contains "Café", "Cafe", "Coffee", "Roastery", "Espresso" → sector MUST be "food_and_beverage", subtype "coffee shop"
 - Business name contains "Bakery", "Patisserie", "Boulangerie" → sector MUST be "food_and_beverage", subtype "bakery"
+- Body/title/meta contains clear food & beverage signals (menu, espresso, latte, coffee, pastry, brunch, dine, eat, drinks, cocktails, cuisine, chef) AND no contradicting signals → sector MUST be "food_and_beverage"
+- Business name is ambiguous (creative/brand name with no clear category keyword) → rely on body text signals, not the name alone
 - Never assign a subtype that belongs to a different sector (e.g. NEVER assign "gym" or "yoga" subtype to a hotel)
 - If uncertain, return "unknown" sector rather than guessing wrong
-- Do not use the user-selected category as a override if the business name clearly contradicts it
 
 Output JSON:
 {
